@@ -24,6 +24,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "stm32f4xx_it.h"
 #include <stdbool.h>
+#include "Delay.h"
 /** @addtogroup STM32F4_Discovery_Peripheral_Examples
   * @{
   */
@@ -36,9 +37,9 @@
 /* Private define ------------------------------------------------------------*/
 /* Private macro -------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
-char recvMesg[100];
-int recvCount = 0;
-bool recvFlag = false;
+extern unsigned char recvMsg[100];
+extern uint8_t recvCount;
+//bool recvFlag = false;
 /* Private function prototypes -----------------------------------------------*/
 /* Private functions ---------------------------------------------------------*/
 extern void SendString(unsigned char *p);
@@ -159,21 +160,11 @@ void SysTick_Handler(void)
   */
 void USART1_IRQHandler(void)
 {
-    char c;
     if(USART_GetFlagStatus(USART1,USART_FLAG_RXNE)==SET)
     {
         USART_ClearFlag(USART1,USART_FLAG_RXNE);
-        c = USART_ReceiveData(USART1);
-        if(c!=0x0A)
-        {   
-            recvMesg[recvCount] = c;
-            recvCount++;
-        }
-        else
-        {
-            recvCount = 0;
-            recvFlag = true;
-        }
+        recvMsg[recvCount] = USART_ReceiveData(USART1);
+        recvCount++;
     }
 }
 

@@ -76,21 +76,13 @@ void TimingDelay_Decrement(void);
        - Reload Value is the parameter to be passed for SysTick_Config() function
        - Reload Value should not exceed 0xFFFFFF
    */
-void Delay_Init(void)
-{
-  if (SysTick_Config(SystemCoreClock / 1000000))
-  { 
-    /* Capture error */ 
-    while (1);
-  }
-}
  
 /**
   * @brief  Inserts a delay time.
   * @param  nTime: specifies the delay time length, in milliseconds.
   * @retval None
   */
-void Delay(__IO uint32_t nTime)
+void Delay(__IO uint32_t nTime)//n*10ms
 { 
   TimingDelay = nTime;
   while(TimingDelay != 0);

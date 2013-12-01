@@ -24,9 +24,11 @@
 #define __App_H
 
 /* Includes ------------------------------------------------------------------*/
-//#include "HB12864.h"
+#include "stm32f4_discovery.h"
 #include "Delay.h"
-
+#include <stdbool.h>
+#include <string.h> 
+    
 #endif /* __App_H */
 
 /******************* (C) COPYRIGHT 2011 STMicroelectronics *****END OF FILE****/

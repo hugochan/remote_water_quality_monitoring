@@ -1,33 +1,43 @@
-#include "stm32f4_discovery.h"
-#include <stdbool.h>
+#include "App.h"
 
 void NVIC_Config(void);
 void USART1_Config(void);
 void SendChar(unsigned char ch);
 void SendString(unsigned char *p);
 unsigned char GetChar(void);
-bool GSM_Config(void);
+bool gsmConfig(void);
 bool handShake(void);
 bool login(void);
-bool SendMesg(void);
+bool WriteMsg(char* dst, char *content);
+bool ReadMsg(unsigned char *(*readMsg[])[], uint8_t readCount);
 void getRT(void);
 
+
+__IO uint16_t TimeDev = 100;//sys中断周期为1000/TimeDev=10ms 
+bool gsmConfigFlag = false;
 bool onlineFlag = false;//在线状态标志位
 bool loginFlag = false;
-extern char recvMesg[100];
-extern bool recvFlag;
+unsigned char recvMsg[1000];
+
+uint8_t recvCount = 0;
+//extern bool recvFlag;
 void main()
 { 
+  unsigned char *(*readMsg[10])[7];
+  uint8_t readCount = 0;
   RCC_ClocksTypeDef RCC_Clocks;
+  /* SysTick end of count event each 10ms */
   RCC_GetClocksFreq(&RCC_Clocks);
-  
-  getRT();//获得当前时间
+  SysTick_Config(RCC_Clocks.HCLK_Frequency / TimeDev);
+   
+  //getRT();//获得当前时间
   USART1_Config();
   NVIC_Config();
-  GSM_Config();
-  while(!login());//直到注册成功退出循环
-  SendString("atd18200259160;\r\n");
-
+  gsmConfigFlag = gsmConfig();
+  //gsmConfigFlag = WriteMsg("18200259160", "hi");
+  ReadMsg(readMsg, readCount);
+  
+  
   
   while(1)
   {
@@ -122,36 +132,106 @@ unsigned char GetChar(void)
 //输入参数：
 //输出参数：状态（true or false）
 *******************************************************************************/
-bool GSM_Config(void)//????
+bool gsmConfig(void)//config text function of gsm
 {   
-    while(!handShake());
-    //SendString('at');
-    //USART_ITConfig(USART1,USART_IT_RXNE,ENABLE);//使能串口接收中断
-    onlineFlag = true;
-    return onlineFlag;
+    char i = 0;
+    while(!handShake())
+    {
+      i++;
+      if (i > 10) return false;
+    }
+    recvCount = 0;
+    SendString("AT+CMGF=1\r\n");
+    Delay(10);
+    if(recvMsg[12]!='O'||recvMsg[13]!='K')
+    {
+      return false;
+    }
+    else
+    {
+    
+    
+    }
+    return true;
 }
 /******************************************************************************
 //握手测试
 //输入参数：
 //输出参数：状态（true or false）
 *******************************************************************************/
-bool handShake(void)//????
+bool handShake(void)
 {
-    SendString("at\r\n");
-    //USART_ITConfig(USART1,USART_IT_RXNE,ENABLE);//使能串口接收中断
-    if(recvFlag&&(recvMesg=="ok\r\n")){}
-    onlineFlag = true;
-    return onlineFlag;
+    recvCount = 0;
+    SendString("AT\r\n");
+    Delay(10);
+    if(recvMsg[5]=='O'&&recvMsg[6]=='K')
+    {
+      return true;
+    }
+    return false;
+
 }
 /******************************************************************************
-//发送一条短信
+//发送一条英文短信
 //输入参数：content——内容
-            dest——目标对象
+            dst——目标对象
 //输出参数：状态（true or false）
 *******************************************************************************/
-bool SendMesg(void)//???
-{
+bool WriteMsg(char* dst, char* content)
+{   
+    recvCount = 0;
+    SendString((unsigned char*)"AT+CMGS=");
+    SendChar(0x22);//"
+    SendString((unsigned char*)dst);//destination call number
+    SendChar(0x22);//"
+    SendString((unsigned char*)"\r\n");
+    Delay(10);
+    SendString((unsigned char*)content);
+    SendChar(0x1A);
+    Delay(10);
+    if (recvMsg[24] != '>')
+    {
+      return false;
+    }
     return true;
+}
+
+/******************************************************************************
+//接收一条英文短信
+//输入参数：content——内容
+            dst——目标对象
+//输出参数：状态（true or false）
+*******************************************************************************/
+bool ReadMsg(unsigned char *(*readMsg[])[], uint8_t readCount)
+{
+  bool recvFlag = false;
+  recvCount = 0;
+  SendString((unsigned char*)"AT+CMGL=");
+  SendChar(0x22);
+  SendString((unsigned char*)"ALL");
+  SendChar(0x22);
+  SendString((unsigned char*)"\r\n");
+  Delay(100);
+  if (recvMsg[recvCount-4]!='O'||recvMsg[recvCount-3]!='K')
+  {
+    recvFlag = false;
+  }
+  else
+  {
+    uint8_t i = 0;
+    char* ptr = strstr((char*)recvMsg, "+CMGL:");
+    while(ptr != NULL)
+    {//????待完善
+      (*readMsg[i])[0] = (unsigned char*)(ptr+7);//readMsg index start addr
+      (*readMsg[i])[1] = (unsigned char*)(ptr+21);//readMsg call Number start addr
+      (*readMsg[i])[2] = (unsigned char*)(ptr+38);//readMsg timestamp start addr
+      (*readMsg[i])[3] = (unsigned char*)(ptr+67);//readMsg content start addr
+      ptr = strstr(ptr+strlen("+CMGL:"), "+CMGL:");//match the next substring
+      i++;
+    }
+    recvFlag = true;
+  }
+  return recvFlag;
 }
 /******************************************************************************
 //获得当前时间

@@ -30,7 +30,6 @@
 /* Exported constants --------------------------------------------------------*/
 /* Exported macro ------------------------------------------------------------*/
 /* Exported functions ------------------------------------------------------- */
-extern void Delay_Init(void);
 extern void Delay(__IO uint32_t nTime);//—” ±nTime us
 extern void TimingDelay_Decrement(void);
 
