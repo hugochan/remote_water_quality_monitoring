@@ -85,7 +85,9 @@ void TimingDelay_Decrement(void);
 void Delay(__IO uint32_t nTime)//n*10ms
 { 
   TimingDelay = nTime;
+  SysTick->CTRL  |= SysTick_CTRL_ENABLE_Msk;//Ê¹ÄÜsystick
   while(TimingDelay != 0);
+  SysTick->CTRL  &= ~SysTick_CTRL_ENABLE_Msk;//Ê§ÄÜsystick
 }
 
 /**

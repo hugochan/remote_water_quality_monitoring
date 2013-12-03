@@ -23,6 +23,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "stm32f4xx_it.h"
+#include "stm32f4_discovery.h"
 #include <stdbool.h>
 #include "Delay.h"
 /** @addtogroup STM32F4_Discovery_Peripheral_Examples
@@ -37,12 +38,21 @@
 /* Private define ------------------------------------------------------------*/
 /* Private macro -------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
+uint32_t capture = 0;
+extern bool onlineFlag;
+extern __IO uint32_t CCR1_Val;
+extern __IO uint32_t CCR2_Val;
+extern __IO uint32_t CCR3_Val;
+extern __IO uint32_t CCR4_Val;
 extern unsigned char recvMsg[100];
 extern uint8_t recvCount;
+extern unsigned char *data[4];
 //bool recvFlag = false;
 /* Private function prototypes -----------------------------------------------*/
 /* Private functions ---------------------------------------------------------*/
-extern void SendString(unsigned char *p);
+extern bool WriteMsg(char* dst, char *content);
+extern bool ReadMsg(unsigned char *(*readMsg[])[], uint8_t *readCount);
+extern bool DeleteMsg(char* deleteNum);
 /******************************************************************************/
 /*            Cortex-M4 Processor Exceptions Handlers                         */
 /******************************************************************************/
@@ -166,6 +176,64 @@ void USART1_IRQHandler(void)
         recvMsg[recvCount] = USART_ReceiveData(USART1);
         recvCount++;
     }
+}
+
+/**
+  * @brief  This function handles TIM5 global interrupt request.
+  * @param  None
+  * @retval None
+  */
+void TIM5_IRQHandler(void)
+{
+  if (TIM_GetITStatus(TIM5, TIM_IT_CC1) != RESET)//处理短信查询定时中断
+  {
+    TIM_ClearITPendingBit(TIM5, TIM_IT_CC1);
+
+    /* LED4 toggling with frequency = 4.57 Hz */
+    STM_EVAL_LEDToggle(LED4);
+   //unsigned char *(*readMsg[10])[7];
+   //uint8_t readCount = 0;
+   //ReadMsg(readMsg, &readCount);
+    
+    capture = TIM_GetCapture1(TIM5);
+    TIM_SetCompare1(TIM5, capture + CCR1_Val);
+    
+  }
+  else if (TIM_GetITStatus(TIM5, TIM_IT_CC2) != RESET)//处理反馈定时中断
+  {
+    TIM_ClearITPendingBit(TIM5, TIM_IT_CC2);
+
+    /* LED3 toggling with frequency = 9.15 Hz */
+    STM_EVAL_LEDToggle(LED3);
+    capture = TIM_GetCapture2(TIM5);
+    TIM_SetCompare2(TIM5, capture + CCR2_Val);
+  }
+  else if (TIM_GetITStatus(TIM5, TIM_IT_CC3) != RESET)//处理事务定时中断
+  {
+    TIM_ClearITPendingBit(TIM5, TIM_IT_CC3);
+
+    /* LED5 toggling with frequency = 18.31 Hz */
+    STM_EVAL_LEDToggle(LED5);
+    
+    if (onlineFlag)
+    {
+     //WriteMsg("8618200259160","sj?ph=[data]&flow=[data]&temp=[data]&state=[state]#[num]");
+    /*反馈处理*/
+    }
+    
+    
+    capture = TIM_GetCapture3(TIM5);
+    TIM_SetCompare3(TIM5, capture + CCR3_Val);
+  }
+  else                                                //备用定时中断
+  {
+    TIM_ClearITPendingBit(TIM5, TIM_IT_CC4);
+
+    /* LED6 toggling with frequency = 36.62 Hz */
+    STM_EVAL_LEDToggle(LED6);
+    capture = TIM_GetCapture4(TIM5);
+    TIM_SetCompare4(TIM5, capture + CCR4_Val);
+  }
 }
 
 /**
