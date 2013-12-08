@@ -35,28 +35,31 @@
   */ 
 
 /* Private typedef -----------------------------------------------------------*/
-/* Private define ------------------------------------------------------------*/
-#define upperComputerNum ((unsigned char*)"8618200259160")
-#define machineNum ((unsigned char*)"8618328356422")    
+/* Private define ------------------------------------------------------------*/   
 /* Private macro -------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
 uint32_t capture = 0;
+extern __IO uint8_t UserButtonPressed;
+bool newMsgComingFlag = false;//新信息到来标志位
+extern bool onlineFlag;
 extern bool sjFlag;
+extern bool jbFlag;
 extern bool waitingCmdAck;
 extern bool newMsgAdvertiseFlag;
 extern bool gsmConfigFlag;
 extern bool waitingsjAckFlag;
 extern bool waitingjbAckFlag;
 extern bool sjAckTimeoutFlag;
+extern bool jbAckTimeoutFlag;
 extern __IO uint32_t TIM5_Val;
 extern __IO uint32_t TIM2_Val;
 extern __IO uint32_t TIM3_Val;
 
 extern unsigned char recvCmdAck[100];
 extern uint16_t recvCmdAckCount;
-extern unsigned char recvNewMsgAdvertise[100];
+extern unsigned char recvNewMsgAdvertise[20];
 extern uint16_t recvNewMsgAdvertiseCount;
-extern char newMsgIndex;
+extern char newMsgIndex[3];
 extern unsigned char *readMsg[7];
 extern uint8_t readCount;
 extern unsigned char *data[3];
@@ -176,6 +179,24 @@ void SysTick_Handler(void)
 {
 }*/
 
+
+/**
+  * @brief  This function handles EXTI0_IRQ Handler.
+  * @param  None
+  * @retval None
+  */
+void EXTI0_IRQHandler(void)
+{
+ 
+     UserButtonPressed = 0x01;
+     STM_EVAL_LEDOn(LED4);
+     jbFlag = true;
+     /* Clear the EXTI line pending bit */
+     EXTI_ClearITPendingBit(USER_BUTTON_EXTI_LINE);
+
+}
+
+
 /**
   * @brief  This function handles USART1 interrupt request.
   * @param  None
@@ -194,13 +215,28 @@ void USART1_IRQHandler(void)
         else
         {
           //处理新信息
-          recvNewMsgAdvertise[recvNewMsgAdvertiseCount] = USART_ReceiveData(USART1);
-          recvNewMsgAdvertiseCount++;
-          if(recvNewMsgAdvertiseCount > 12)
+          
+          char tempdata = USART_ReceiveData(USART1);
+          if ((recvNewMsgAdvertiseCount == 0)&&(tempdata == 'I'))//从+CNMI:的'I'开始接受AT指令，作为判据
           {
-            newMsgIndex = recvNewMsgAdvertise[12];//每读取一条信息都删除，原则上新信息index不会超过9，所以newMsgIndex只取1位记录     
-            recvNewMsgAdvertiseCount = 0;
-            newMsgAdvertiseFlag = true;//新信息标志位置位（未避免中断嵌套（不被允许），不在此处读信息）  
+            newMsgComingFlag = true;
+          }
+          if(newMsgComingFlag)
+          {
+            recvNewMsgAdvertise[recvNewMsgAdvertiseCount] = tempdata;
+            recvNewMsgAdvertiseCount++;
+            if(recvNewMsgAdvertise[recvNewMsgAdvertiseCount-1] == '\r')
+            {
+              uint8_t i; 
+              for(i=8;i<(recvNewMsgAdvertiseCount-1);i++)
+              {
+                newMsgIndex[i-8] = recvNewMsgAdvertise[i];
+              }
+              newMsgIndex[i] = (char)0x00;
+              recvNewMsgAdvertiseCount = 0;
+              newMsgAdvertiseFlag = true;//收到新信息标志位置位（未避免中断嵌套（不被允许），不在此处读信息）  
+              newMsgComingFlag = false;//新信息到来标志位
+            }
           }
         }
     }
@@ -220,8 +256,11 @@ void TIM2_IRQHandler(void)
 
     /* LED4 toggling with frequency = 4.57 Hz */
     STM_EVAL_LEDToggle(LED4);
-
-    
+    if(waitingjbAckFlag)//警报应答超时
+    {
+      jbAckTimeoutFlag = true;
+    }
+    TIM_Cmd(TIM2, DISABLE);//关闭jb应答定时器
     TIM_SetCounter(TIM2, (uint32_t)0);
   }
 }
@@ -234,16 +273,16 @@ void TIM2_IRQHandler(void)
   */
 void TIM5_IRQHandler(void)
 {
-  if (TIM_GetITStatus(TIM5, TIM_IT_Update) != RESET)//处理sj应答定时中断
+  if (TIM_GetITStatus(TIM5, TIM_IT_Update) != RESET)//处理初始注册阶段sj应答定时中断
   {
     TIM_ClearITPendingBit(TIM5, TIM_IT_Update);
 
     /* LED4 toggling with frequency = 4.57 Hz */
     STM_EVAL_LEDToggle(LED3);
-    if(waitingsjAckFlag)//定时器截止时仍未收到数据应答
+    if(gsmConfigFlag&&(!onlineFlag))
     {
       sjAckTimeoutFlag = true;
-      TIM_Cmd(TIM5, DISABLE);//关闭sj应答定时器计数器（即关闭本计数器）
+      //TIM_Cmd(TIM5, DISABLE);//关闭初始注册阶段sj应答定时器计数器（即关闭本计数器）
     }
     
     TIM_SetCounter(TIM5, (uint32_t)0);
@@ -264,7 +303,7 @@ void TIM3_IRQHandler(void)
 
     /* LED4 toggling with frequency = 4.57 Hz */
     STM_EVAL_LEDToggle(LED5);
-    if(gsmConfigFlag&&(waitingsjAckFlag==false))//当且仅当gsm配置成功&&sjack妥收条件成立，才会置位sjFlag并发送新sj信息
+    if(gsmConfigFlag&&onlineFlag)//当且仅当gsm配置成功&&sjack妥收条件成立，才会置位sjFlag并发送新sj信息
     {
       sjFlag = true;
     }

@@ -10,12 +10,14 @@ void SendString(unsigned char *p);
 unsigned char GetChar(void);
 bool gsmConfig(void);
 bool handShake(void);
-bool registration(void);
+void atAdjust(void);
+void registration(void);
 void handleFeedback(void);
 bool WriteMsg(char* dst, char *content);
-bool ReadMsg(unsigned char* readMsg[], char msgIndex);
+bool ReadMsg(unsigned char* readMsg[], char* msgIndex);
 bool ReadMsg2(unsigned char *(*readMsg2[])[], uint8_t *readCount2);
 bool DeleteMsg(char* deleteNum);
+bool DeleteAllMsgs(void);
 void getRT(void);
 
 
@@ -27,34 +29,43 @@ __IO uint32_t TIM3_Val = 18000;//sj事务定时器30s（优先级最低）
 
 
 __IO uint16_t TimeDev = 100;//sys中断周期为1000/TimeDev=10ms
-
+__IO uint8_t UserButtonPressed = 0x00;
 unsigned char *data[3]={"8", "100", "0"};//ph flow state
 
 
-
-bool gsmConfigFlag = false;
+bool machineState = false;//机器状态标志位（flase for 关机，true for 工作）
+bool gsmConfigFlag = false;//gsm配置成功标志位
+bool onlineFlag = false;//在线标志位（即向上位机注册成功）
 bool sjFlag = false;//数据事务标志位
+bool jbFlag = false;//警报标志位
 bool waitingsjAckFlag = false;//等待数据应答标志位
 bool waitingjbAckFlag = false;//等待警报应答志位
 bool sjAckTimeoutFlag = false;//等待数据应答超时标志位
+bool jbAckTimeoutFlag = false;//等待警报应答超时标志位
 bool waitingCmdAck = false;//等待AT命令的应答
-bool newMsgAdvertiseFlag = false;//新信息标志位
-bool readSuccess = false;//信息读取成功标志位
+bool newMsgAdvertiseFlag = false;//收到新信息标志位
+
+bool Success = false;//成功标志位
 unsigned char recvCmdAck[1000];
 uint16_t recvCmdAckCount = 0;
-unsigned char recvNewMsgAdvertise[100];
+unsigned char recvNewMsgAdvertise[20];
 uint16_t recvNewMsgAdvertiseCount = 0;
-char newMsgIndex;
+char newMsgIndex[3];
 unsigned char *readMsg[3];
-
+char generalCounter = 0;
 //extern bool recvFlag;
 void main()
 {
-  /* Initialize Leds mounted on STM32F4-Discovery board */
+  /* Initialize User_Button and Leds mounted on STM32F4-Discovery board */
+  STM_EVAL_PBInit(BUTTON_USER, BUTTON_MODE_EXTI); 
   STM_EVAL_LEDInit(LED4);
   STM_EVAL_LEDInit(LED3);
   STM_EVAL_LEDInit(LED5);
   STM_EVAL_LEDInit(LED6);
+  STM_EVAL_LEDOff(LED4);
+  STM_EVAL_LEDOff(LED3);
+  STM_EVAL_LEDOff(LED5);
+  STM_EVAL_LEDOff(LED6);
   
   
   RCC_ClocksTypeDef RCC_Clocks;
@@ -76,62 +87,181 @@ void main()
   {
     if (gsmConfigFlag)
     {
-       if (newMsgAdvertiseFlag)
+       if (onlineFlag)
        {
-         readSuccess = ReadMsg(readMsg, newMsgIndex);
-         newMsgAdvertiseFlag = false;
-         if (readSuccess&&(strcmp(readMsg[0],upperComputerNum)==0))
+         if (newMsgAdvertiseFlag)
          {
-           if (strcmp((char*)readMsg[2], "sj?ack#")==0)
-           {  
-
-              waitingsjAckFlag = false;
-           }
-           else if (strcmp((char*)readMsg[2], "zt?#")==0)
-           {
            
-           }
-           else if (strcmp((char*)readMsg[2], "jb?ack#")==0)
+           generalCounter = 0; 
+           Success = ReadMsg(readMsg, newMsgIndex);
+           while (!Success) 
            {
-           
+              Success = ReadMsg(readMsg, newMsgIndex);
+              generalCounter++;
+              if(generalCounter>2) break;
            }
-           else if ((strcmp((char*)readMsg[2], "kz?state=0#")==0)||(strcmp(readMsg[2],(unsigned char*)"kz?state=1#")==0))
+           newMsgAdvertiseFlag = false;
+           if (Success&&(strcmp((char*)readMsg[0], upperComputerNum)==0))
            {
-           
-           }
-           else
-           {
+             if (strcmp((char*)readMsg[2], "sj?ack#")==0)//sj应答处理
+             {
+               
+             }
+             else if (strcmp((char*)readMsg[2], "zt?#")==0)//zt命令响应
+             {
+               generalCounter = 0; 
+               Success = WriteMsg(upperComputerNum,"zt?ph=[data]&flow=[data]&state=[state]#num_date");
+               while (!Success) 
+               {
+                 Success = WriteMsg(upperComputerNum,"zt?ph=[data]&flow=[data]&state=[state]#num_date");
+                 generalCounter++;
+                 if(generalCounter>2) break;
+               }
+             }
+             else if (strcmp((char*)readMsg[2], "jb?ack#")==0)//jb应答处理
+             {
+                waitingjbAckFlag = false;//jb应答成功，不再监测jb应答
+                jbAckTimeoutFlag = false;
+             }
+             else if ((strcmp((char*)readMsg[2], "kz?state=0#")==0)||(strcmp((char *)readMsg[2], "kz?state=1#")==0))
+             {//kz命令响应
+               
+               if (*(readMsg[2]+9) == '0') machineState = false;
+               else if (*(readMsg[2]+9) == '1') machineState = true; 
+               
+               generalCounter = 0; 
+               Success = WriteMsg(upperComputerNum,"kz?ack#num_date");
+               while (!Success) 
+               {
+                 Success = WriteMsg(upperComputerNum,"kz?ack#num_date");
+                 generalCounter++;
+                 if(generalCounter>2) break;
+               }
+             }
+             else
+             {
+               
+             }
              
            }
-           
+            //delete the sj?ack message
+            Success = DeleteMsg(newMsgIndex);
+            generalCounter = 0;
+            while (!Success) 
+            {
+              Success = DeleteMsg(newMsgIndex);
+              generalCounter++;
+              if(generalCounter>2) break;
+            }
+    
          }
-  
-       }
-       if (sjFlag)
-       {
-         WriteMsg(upperComputerNum,"sj?ph=[data]&flow=[data]&temp=[data]&state=[state]#[num]");
-          /*反馈处理*/
-         waitingsjAckFlag = true;
-         sjAckTimeoutFlag = false;
-         TIM_SetCounter(TIM5, (uint32_t)0);
-         TIM_Cmd(TIM5, ENABLE);//打开sj应答定时器计数器 
-         sjFlag = false;
+         
+
+
+         if (jbFlag&&(!waitingjbAckFlag))//发送jb信息
+         {
+           machineState = false;
+           generalCounter = 0;
+           atAdjust();
+           Success = WriteMsg(upperComputerNum, "jb?ph=[data]&state=[state]#num_date");
+           while (!Success) 
+           {
+              atAdjust();
+              Success = WriteMsg(upperComputerNum, "jb?ph=[data]&state=[state]#num_date");
+              generalCounter++;
+              if(generalCounter>2) break;
+           }
+           waitingjbAckFlag = true;
+           jbFlag = false;
+           TIM_Cmd(TIM2, ENABLE);//打开jb应答定时器
+         }
+         
+         if (jbAckTimeoutFlag)//jb应答超时重发
+         {
+           generalCounter = 0;
+           atAdjust();
+           Success = WriteMsg(upperComputerNum, "jb?ph=[data]&state=[state]#num_date");
+           while (!Success) 
+           {
+              atAdjust();
+              Success = WriteMsg(upperComputerNum, "jb?ph=[data]&state=[state]#num_date");
+              generalCounter++;
+              if(generalCounter>2) break;
+            }
+           jbAckTimeoutFlag = false;
+           TIM_Cmd(TIM2, ENABLE);//打开jb应答定时器
+         }
+         
+         
+         if (sjFlag)//定期发送sj信息，注册成功后不验证应答信息
+         {
+           generalCounter = 0;
+           atAdjust();//调整指令步伐
+           Success = WriteMsg(upperComputerNum, "sj?ph=[data]&flow=[data]&state=[state]#num_date");
+           while (!Success) 
+           {
+              atAdjust();
+              Success = WriteMsg(upperComputerNum, "sj?ph=[data]&flow=[data]&state=[state]#num_date");
+              generalCounter++;
+              if(generalCounter>2) break;//一共尝试三次
+            }
+           sjFlag = false;
+         }
+
        }
        
-       if (sjAckTimeoutFlag)
+       else
        {
-         WriteMsg(upperComputerNum,"sj?ph=[data]&flow=[data]&temp=[data]&state=[state]#[num]");
-          /*反馈处理*/
-         sjAckTimeoutFlag = false;
-         TIM_SetCounter(TIM5, (uint32_t)0);
-         TIM_Cmd(TIM5, ENABLE);//打开sj应答定时器计数器
+          if (newMsgAdvertiseFlag)
+          {  
+              newMsgAdvertiseFlag = false;
+              generalCounter = 0;
+              Success = ReadMsg(readMsg, newMsgIndex);
+              while (!Success) 
+              {
+                 Success = ReadMsg(readMsg, newMsgIndex);
+                 generalCounter++;
+                 if(generalCounter>2) break;
+              }
+              if (Success&&(strcmp((char*)readMsg[0], upperComputerNum)==0))
+              {
+                if (strcmp((char*)readMsg[2], "sj?ack#")==0)//sj应答处理
+                {
+                  TIM_SetCounter(TIM3, (uint32_t)0);//软件清零sj事务定时器，防止注册成功后立即发送重复信息
+                  /*注册成功*/
+                  onlineFlag = true;              
+                  sjAckTimeoutFlag = false;
+                }
+              }
+              //delete the sj?ack message
+              Success = DeleteMsg(newMsgIndex);
+              generalCounter = 0;
+              while (!Success) 
+              {
+                 Success = DeleteMsg(newMsgIndex);
+                 generalCounter++;
+                 if(generalCounter>2) break;
+              }
+            
+            
+          }
+          
+          if(sjAckTimeoutFlag)
+          {
+            registration();
+            sjAckTimeoutFlag = false;
+          }
        }
-       
        
     }
     else
     {
       gsmConfigFlag = gsmConfig();
+      if (gsmConfigFlag) 
+      {
+        //deleate all messages,删除可能的信息积存
+        DeleteAllMsgs();
+      }  
     }
     
   }
@@ -265,7 +395,7 @@ void TIM5_Config(void)
   TIM_ITConfig(TIM5, TIM_IT_Update, ENABLE);   //使能中断，中断事件为定时器更新事件
 
   /* TIM5 enable counter */
-  //TIM_Cmd(TIM5, ENABLE);
+  TIM_Cmd(TIM5, ENABLE);
 }
 
 
@@ -398,6 +528,22 @@ bool handShake(void)
     return false;
 
 }
+
+/******************************************************************************
+//调整指令步伐,防止at指令写入一错永错
+//输入参数：
+//输出参数：状态（无）
+*******************************************************************************/
+void atAdjust(void)
+{       
+    waitingCmdAck = true;//等待AT指令应答标志位置位
+    recvCmdAckCount = 0;
+    SendString("\r\n");
+    Delay(10);
+    waitingCmdAck = false;//等待AT指令应答标志位复位
+}
+
+
 /******************************************************************************
 //发送一条英文短信
 //输入参数：content——内容
@@ -416,9 +562,9 @@ bool WriteMsg(char* dst, char* content)
     Delay(10);
     SendString((unsigned char*)content);
     SendChar(0x1A);
-    Delay(10);
+    Delay(100);
     waitingCmdAck = false;//等待AT指令应答标志位复位
-    if (recvCmdAck[24] != '>')
+    if (recvCmdAck[26] != '>')
     {
       return false;
     }
@@ -431,13 +577,13 @@ bool WriteMsg(char* dst, char* content)
             dst——目标对象
 //输出参数：状态（true or false）
 *******************************************************************************/
-bool ReadMsg(unsigned char* readMsg[], char msgIndex)
+bool ReadMsg(unsigned char* readMsg[], char* msgIndex)
 {
   bool readFlag = false;
   waitingCmdAck = true;//等待AT指令应答标志位置位
   recvCmdAckCount = 0;
   SendString((unsigned char*)"AT+CMGR=");
-  SendChar((unsigned char)msgIndex);
+  SendString((unsigned char*)msgIndex);
   SendString((unsigned char*)"\r\n");
   Delay(200);
   waitingCmdAck = false;//等待AT指令应答标志位复位
@@ -599,7 +745,7 @@ bool DeleteMsg(char* deleteNum)
   SendString((unsigned char*)"\r\n");
   Delay(20);
   waitingCmdAck = false;//等待AT指令应答标志位复位
-  if(recvCmdAck[recvCmdAckCount-4]!='O'||recvCmdAck[recvCmdAckCount-3]!='K')
+  if(recvCmdAck[12] == 'E')
   {
     return false;
   }
@@ -608,6 +754,31 @@ bool DeleteMsg(char* deleteNum)
     return true;
   }
 }
+
+
+/******************************************************************************
+//删除所有英文短信
+//输入参数：无
+//输出参数：状态（true or false）
+*******************************************************************************/
+bool DeleteAllMsgs(void)
+{
+  waitingCmdAck = true;//等待AT指令应答标志位置位
+  recvCmdAckCount = 0;
+  SendString((unsigned char*)"AT+CMGD=1,4");
+  SendString((unsigned char*)"\r\n");
+  Delay(20);
+  waitingCmdAck = false;//等待AT指令应答标志位复位
+  if(recvCmdAck[13] == 'E')
+  {
+    return false;
+  }
+  else
+  {
+    return true;
+  }
+}
+
 /******************************************************************************
 //获得当前时间
 //输入参数：
@@ -622,20 +793,17 @@ void getRT(void)//???
 //输入参数：
 //输出参数：
 *******************************************************************************/
-bool registration(void)
+void registration(void)
 {   
-    unsigned char *readMsg[3];
-    uint8_t readCount = 0;
-    WriteMsg("8618200259160", "zc?#1");
-    Delay(500);//concrete delay time should be adjusted
-    //ReadMsg(readMsg, &readCount);
-    if(1)//判断反馈信息
+    atAdjust();
+    generalCounter = 0;
+    Success = WriteMsg(upperComputerNum, "sj?ph=[data]&flow=[data]&state=[state]#num_date");
+    while (!Success) 
     {
-      return true;
-    }
-    else
-    {
-      return false;
+        atAdjust();
+        Success = WriteMsg(upperComputerNum, "sj?ph=[data]&flow=[data]&state=[state]#num_date");
+        generalCounter++;
+        if(generalCounter>2) break;
     }
 }
 

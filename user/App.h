@@ -31,7 +31,7 @@
 #include <stdlib.h>
 
 /* defines ------------------------------------------------------------------*/
-#define upperComputerNum ((unsigned char*)"8618200259160")
+#define upperComputerNum ((char*)"8618200259160")
 #define machineNum ((unsigned char*)"8618328356422")
 
 /* Includes ------------------------------------------------------------------*/    
