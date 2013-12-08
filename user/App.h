@@ -27,7 +27,15 @@
 #include "stm32f4_discovery.h"
 #include "Delay.h"
 #include <stdbool.h>
-#include <string.h> 
+#include <string.h>
+#include <stdlib.h>
+
+/* defines ------------------------------------------------------------------*/
+#define upperComputerNum ((unsigned char*)"8618200259160")
+#define machineNum ((unsigned char*)"8618328356422")
+
+/* Includes ------------------------------------------------------------------*/    
+    
     
 #endif /* __App_H */
 

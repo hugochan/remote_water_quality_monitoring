@@ -1,7 +1,9 @@
 #include "App.h"
 
 void NVIC_Config(void);
-void TIM_Config(void);
+void TIM2_Config(void);
+void TIM3_Config(void);
+void TIM5_Config(void);
 void USART1_Config(void);
 void SendChar(unsigned char ch);
 void SendString(unsigned char *p);
@@ -11,23 +13,39 @@ bool handShake(void);
 bool registration(void);
 void handleFeedback(void);
 bool WriteMsg(char* dst, char *content);
-bool ReadMsg(unsigned char *(*readMsg[])[], uint8_t *readCount);
+bool ReadMsg(unsigned char* readMsg[], char msgIndex);
+bool ReadMsg2(unsigned char *(*readMsg2[])[], uint8_t *readCount2);
 bool DeleteMsg(char* deleteNum);
 void getRT(void);
 
-#define machineNum ((unsigned char)1)
-#define timerCounterFreq ((uint16_t)100)
-__IO uint32_t CCR1_Val = 2500;//查询短信定时器5s
-__IO uint32_t CCR2_Val = 15000;//反馈定时器30s
-__IO uint32_t CCR3_Val = 150000;//事务定时器5min
-__IO uint32_t CCR4_Val = 450000;//事务定时器2 15min
-__IO uint16_t TimeDev = 100;//sys中断周期为1000/TimeDev=10ms 
+
+#define timerCounterFreq ((uint16_t)2000)
+
+__IO uint32_t TIM2_Val = 6000;//jb应答定时器10s(优先级最高)
+__IO uint32_t TIM5_Val = 12000;//sj应答定时器20s
+__IO uint32_t TIM3_Val = 18000;//sj事务定时器30s（优先级最低）
+
+
+__IO uint16_t TimeDev = 100;//sys中断周期为1000/TimeDev=10ms
+
+unsigned char *data[3]={"8", "100", "0"};//ph flow state
+
+
+
 bool gsmConfigFlag = false;
-bool onlineFlag = false;//在线状态标志位
-bool waitingFeedbackFlag = false;//等待反馈标志位
-unsigned char recvMsg[1000];
-uint16_t recvCount = 0;
-unsigned char *data[4];
+bool sjFlag = false;//数据事务标志位
+bool waitingsjAckFlag = false;//等待数据应答标志位
+bool waitingjbAckFlag = false;//等待警报应答志位
+bool sjAckTimeoutFlag = false;//等待数据应答超时标志位
+bool waitingCmdAck = false;//等待AT命令的应答
+bool newMsgAdvertiseFlag = false;//新信息标志位
+bool readSuccess = false;//信息读取成功标志位
+unsigned char recvCmdAck[1000];
+uint16_t recvCmdAckCount = 0;
+unsigned char recvNewMsgAdvertise[100];
+uint16_t recvNewMsgAdvertiseCount = 0;
+char newMsgIndex;
+unsigned char *readMsg[3];
 
 //extern bool recvFlag;
 void main()
@@ -38,8 +56,7 @@ void main()
   STM_EVAL_LEDInit(LED5);
   STM_EVAL_LEDInit(LED6);
   
-  unsigned char *(*readMsg[10])[7];
-  uint8_t readCount = 0;
+  
   RCC_ClocksTypeDef RCC_Clocks;
   /* SysTick end of count event each 10ms */
   RCC_GetClocksFreq(&RCC_Clocks);
@@ -50,23 +67,71 @@ void main()
   //getRT();//获得当前时间
   USART1_Config();
   NVIC_Config();
-  TIM_Config();
-  gsmConfigFlag = gsmConfig();
-  //gsmConfigFlag = WriteMsg("18200259160", "hi");
-  ReadMsg(readMsg, &readCount);
-  //DeleteMsg("1");
-  //registration(machineNum);
+  TIM2_Config();
+  TIM5_Config();
+  TIM3_Config();
   
+    
   while(1)
   {
-    if (onlineFlag)
+    if (gsmConfigFlag)
     {
-       TIM_ITConfig(TIM5, TIM_IT_CC3, ENABLE);//打开事务处理定时器通道
+       if (newMsgAdvertiseFlag)
+       {
+         readSuccess = ReadMsg(readMsg, newMsgIndex);
+         newMsgAdvertiseFlag = false;
+         if (readSuccess&&(strcmp(readMsg[0],upperComputerNum)==0))
+         {
+           if (strcmp((char*)readMsg[2], "sj?ack#")==0)
+           {  
+
+              waitingsjAckFlag = false;
+           }
+           else if (strcmp((char*)readMsg[2], "zt?#")==0)
+           {
+           
+           }
+           else if (strcmp((char*)readMsg[2], "jb?ack#")==0)
+           {
+           
+           }
+           else if ((strcmp((char*)readMsg[2], "kz?state=0#")==0)||(strcmp(readMsg[2],(unsigned char*)"kz?state=1#")==0))
+           {
+           
+           }
+           else
+           {
+             
+           }
+           
+         }
+  
+       }
+       if (sjFlag)
+       {
+         WriteMsg(upperComputerNum,"sj?ph=[data]&flow=[data]&temp=[data]&state=[state]#[num]");
+          /*反馈处理*/
+         waitingsjAckFlag = true;
+         sjAckTimeoutFlag = false;
+         TIM_SetCounter(TIM5, (uint32_t)0);
+         TIM_Cmd(TIM5, ENABLE);//打开sj应答定时器计数器 
+         sjFlag = false;
+       }
+       
+       if (sjAckTimeoutFlag)
+       {
+         WriteMsg(upperComputerNum,"sj?ph=[data]&flow=[data]&temp=[data]&state=[state]#[num]");
+          /*反馈处理*/
+         sjAckTimeoutFlag = false;
+         TIM_SetCounter(TIM5, (uint32_t)0);
+         TIM_Cmd(TIM5, ENABLE);//打开sj应答定时器计数器
+       }
+       
+       
     }
     else
     {
-      TIM_ITConfig(TIM5, TIM_IT_CC3, DISABLE);//关闭事务处理定时器通道
-      //onlineFlag = registration();
+      gsmConfigFlag = gsmConfig();
     }
     
   }
@@ -76,10 +141,10 @@ void main()
 void NVIC_Config(void)
 {
     NVIC_InitTypeDef NVIC_InitStructure;
-    NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);
+    NVIC_PriorityGroupConfig(NVIC_PriorityGroup_3);
     
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0x03;
-    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0x02;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 4;
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
     NVIC_InitStructure.NVIC_IRQChannel  = USART1_IRQn;
     NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
         
@@ -88,7 +153,84 @@ void NVIC_Config(void)
 
 
 /*********************************定时器初始化*******************************/
-void TIM_Config(void)
+//32bit timer
+void TIM2_Config(void)
+{
+  NVIC_InitTypeDef NVIC_InitStructure;
+
+  /* TIM2 clock enable */
+  RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);
+
+  /* Enable the TIM2 gloabal Interrupt */
+  NVIC_PriorityGroupConfig(NVIC_PriorityGroup_3);
+  NVIC_InitStructure.NVIC_IRQChannel = TIM2_IRQn;
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 1;
+  NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
+  NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+  NVIC_Init(&NVIC_InitStructure);
+  
+  
+  TIM_TimeBaseInitTypeDef  TIM_TimeBaseStructure;
+  /* Compute the prescaler value */
+  uint16_t PrescalerValue = (uint16_t) ((SystemCoreClock / 2) / timerCounterFreq) - 1;//2khz timer counter
+  
+  
+  /* Time base configuration */
+  TIM_TimeBaseStructure.TIM_Period = TIM2_Val;
+  TIM_TimeBaseStructure.TIM_Prescaler = PrescalerValue;
+  TIM_TimeBaseStructure.TIM_ClockDivision = 0;
+  TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+
+  TIM_TimeBaseInit(TIM2, &TIM_TimeBaseStructure);
+  
+  TIM_ClearFlag(TIM2, TIM_FLAG_Update);   //必须先清除配置时候产生的更新标志
+  TIM_ITConfig(TIM2, TIM_IT_Update, ENABLE);   //使能中断，中断事件为定时器更新事件
+
+  /* TIM2 enable counter */
+  //TIM_Cmd(TIM2, ENABLE);
+}
+
+//16bit timer
+void TIM3_Config(void)
+{
+  NVIC_InitTypeDef NVIC_InitStructure;
+
+  /* TIM3 clock enable */
+  RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3, ENABLE);
+
+  /* Enable the TIM3 gloabal Interrupt */
+  NVIC_PriorityGroupConfig(NVIC_PriorityGroup_3);
+  NVIC_InitStructure.NVIC_IRQChannel = TIM3_IRQn;
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 3;
+  NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
+  NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+  NVIC_Init(&NVIC_InitStructure);
+  
+  
+  TIM_TimeBaseInitTypeDef  TIM_TimeBaseStructure;
+  /* Compute the prescaler value */
+  uint16_t PrescalerValue = (uint16_t) ((SystemCoreClock / 2) / timerCounterFreq) - 1;//2khz timer counter
+  
+  
+  /* Time base configuration */
+  TIM_TimeBaseStructure.TIM_Period = TIM3_Val;
+  TIM_TimeBaseStructure.TIM_Prescaler = PrescalerValue;
+  TIM_TimeBaseStructure.TIM_ClockDivision = 0;
+  TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+
+  TIM_TimeBaseInit(TIM3, &TIM_TimeBaseStructure);
+ 
+
+
+  TIM_ClearFlag(TIM3, TIM_FLAG_Update);   //必须先清除配置时候产生的更新标志
+  TIM_ITConfig(TIM3, TIM_IT_Update, ENABLE);   //使能中断，中断事件为定时器更新事件
+
+  /* TIM3 enable counter */
+  TIM_Cmd(TIM3, ENABLE);
+}
+
+//32bit timer
+void TIM5_Config(void)
 {
   NVIC_InitTypeDef NVIC_InitStructure;
 
@@ -96,70 +238,34 @@ void TIM_Config(void)
   RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM5, ENABLE);
 
   /* Enable the TIM5 gloabal Interrupt */
+  NVIC_PriorityGroupConfig(NVIC_PriorityGroup_3);
   NVIC_InitStructure.NVIC_IRQChannel = TIM5_IRQn;
   NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 2;
-  NVIC_InitStructure.NVIC_IRQChannelSubPriority = 3;
+  NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
   NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
   NVIC_Init(&NVIC_InitStructure);
   
   
   TIM_TimeBaseInitTypeDef  TIM_TimeBaseStructure;
-  TIM_OCInitTypeDef  TIM_OCInitStructure;
   /* Compute the prescaler value */
-  uint32_t PrescalerValue = (uint32_t) ((SystemCoreClock / 2) / timerCounterFreq) - 1;//100hz timer counter
+  uint16_t PrescalerValue = (uint16_t) ((SystemCoreClock / 2) / timerCounterFreq) - 1;//2khz timer counter
   
   
-  /* Time base configuration */
-  TIM_TimeBaseStructure.TIM_Period = 0xFFFFFFFF;
-  TIM_TimeBaseStructure.TIM_Prescaler = 0;
+    /* Time base configuration */
+  TIM_TimeBaseStructure.TIM_Period = TIM5_Val;
+  TIM_TimeBaseStructure.TIM_Prescaler = PrescalerValue;
   TIM_TimeBaseStructure.TIM_ClockDivision = 0;
   TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
 
   TIM_TimeBaseInit(TIM5, &TIM_TimeBaseStructure);
-  
-  
-   /* Prescaler configuration */
-  TIM_PrescalerConfig(TIM5, PrescalerValue, TIM_PSCReloadMode_Immediate);
+ 
 
-  /* Output Compare Timing Mode configuration: Channel1 */
-  TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_Timing;
-  TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
-  TIM_OCInitStructure.TIM_Pulse = CCR1_Val;
-  TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;
 
-  TIM_OC1Init(TIM5, &TIM_OCInitStructure);
-  
-  TIM_OC1PreloadConfig(TIM5, TIM_OCPreload_Disable);
-  
-  /* Output Compare Timing Mode configuration: Channel2 */
-  TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
-  TIM_OCInitStructure.TIM_Pulse = CCR2_Val;
+  TIM_ClearFlag(TIM5, TIM_FLAG_Update);   //必须先清除配置时候产生的更新标志
+  TIM_ITConfig(TIM5, TIM_IT_Update, ENABLE);   //使能中断，中断事件为定时器更新事件
 
-  TIM_OC2Init(TIM5, &TIM_OCInitStructure);
-
-  TIM_OC2PreloadConfig(TIM5, TIM_OCPreload_Disable);
-
-  /* Output Compare Timing Mode configuration: Channel3 */
-  TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
-  TIM_OCInitStructure.TIM_Pulse = CCR3_Val;
-
-  TIM_OC3Init(TIM5, &TIM_OCInitStructure);
-
-  TIM_OC3PreloadConfig(TIM5, TIM_OCPreload_Disable);
-
-  /* Output Compare Timing Mode configuration: Channel4 */
-  TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
-  TIM_OCInitStructure.TIM_Pulse = CCR4_Val;
-
-  TIM_OC4Init(TIM5, &TIM_OCInitStructure);
-
-  TIM_OC4PreloadConfig(TIM5, TIM_OCPreload_Disable);
-   
-  /* TIM Interrupts enable */
-  //TIM_ITConfig(TIM5, TIM_IT_CC1 | TIM_IT_CC2 | TIM_IT_CC3 | TIM_IT_CC4, ENABLE);
-  TIM_ITConfig(TIM5, TIM_IT_CC1, ENABLE);
   /* TIM5 enable counter */
-  TIM_Cmd(TIM5, ENABLE);
+  //TIM_Cmd(TIM5, ENABLE);
 }
 
 
@@ -238,23 +344,37 @@ unsigned char GetChar(void)
 //输出参数：状态（true or false）
 *******************************************************************************/
 bool gsmConfig(void)//config text function of gsm
-{   
+{
     char i = 0;
     while(!handShake())
     {
       i++;
       if (i > 10) return false;
     }
-    recvCount = 0;
+    waitingCmdAck = true;//等待AT指令应答标志位置位
+    recvCmdAckCount = 0;
     SendString("AT+CMGF=1\r\n");
     Delay(10);
-    if(recvMsg[12]!='O'||recvMsg[13]!='K')
+    waitingCmdAck = false;//等待AT指令应答标志位复位
+    if(recvCmdAck[12]!='O'||recvCmdAck[13]!='K')
     {
       return false;
     }
     else
-    {
-    
+    {//先删除所有短信
+      waitingCmdAck = true;//等待AT指令应答标志位置位
+      recvCmdAckCount = 0;
+      SendString("AT+CNMI=1,1,2\r\n");//打开新信息提示模式
+      Delay(10);
+      waitingCmdAck = false;//等待AT指令应答标志位复位
+      if(recvCmdAck[recvCmdAckCount-4]!='O'&&recvCmdAck[recvCmdAckCount-3]!='K')
+      {
+        return false;
+      }
+      else
+      {
+      
+      }
     
     }
     return true;
@@ -265,11 +385,13 @@ bool gsmConfig(void)//config text function of gsm
 //输出参数：状态（true or false）
 *******************************************************************************/
 bool handShake(void)
-{
-    recvCount = 0;
+{       
+    waitingCmdAck = true;//等待AT指令应答标志位置位
+    recvCmdAckCount = 0;
     SendString("AT\r\n");
     Delay(10);
-    if(recvMsg[5]=='O'&&recvMsg[6]=='K')
+    waitingCmdAck = false;//等待AT指令应答标志位复位
+    if(recvCmdAck[5]=='O'&&recvCmdAck[6]=='K')
     {
       return true;
     }
@@ -284,7 +406,8 @@ bool handShake(void)
 *******************************************************************************/
 bool WriteMsg(char* dst, char* content)
 {   
-    recvCount = 0;
+    waitingCmdAck = true;//等待AT指令应答标志位置位
+    recvCmdAckCount = 0;
     SendString((unsigned char*)"AT+CMGS=");
     SendChar(0x22);//"
     SendString((unsigned char*)dst);//destination call number
@@ -294,7 +417,8 @@ bool WriteMsg(char* dst, char* content)
     SendString((unsigned char*)content);
     SendChar(0x1A);
     Delay(10);
-    if (recvMsg[24] != '>')
+    waitingCmdAck = false;//等待AT指令应答标志位复位
+    if (recvCmdAck[24] != '>')
     {
       return false;
     }
@@ -307,25 +431,93 @@ bool WriteMsg(char* dst, char* content)
             dst——目标对象
 //输出参数：状态（true or false）
 *******************************************************************************/
-bool ReadMsg(unsigned char *(*readMsg[])[], uint8_t *readCount)
+bool ReadMsg(unsigned char* readMsg[], char msgIndex)
+{
+  bool readFlag = false;
+  waitingCmdAck = true;//等待AT指令应答标志位置位
+  recvCmdAckCount = 0;
+  SendString((unsigned char*)"AT+CMGR=");
+  SendChar((unsigned char)msgIndex);
+  SendString((unsigned char*)"\r\n");
+  Delay(200);
+  waitingCmdAck = false;//等待AT指令应答标志位复位
+  if (recvCmdAck[recvCmdAckCount-4]!='O'||recvCmdAck[recvCmdAckCount-3]!='K')
+  {
+    readFlag = false;
+  }
+  else
+  {
+      char *ptr = strstr((char*)recvCmdAck, "+CMGR:");
+    
+    
+      ptr += 21;
+      /*decompose the readMsg: readMsg call number*/
+      uint16_t ptrCount = 0;
+      readMsg[0] = (unsigned char*)ptr;//readMsg call number start addr
+      while(*(ptr++) != '"') ptrCount++;
+      *(readMsg[0]+ptrCount) = (unsigned char)0x00;
+      
+      //adjust ptr
+      while(*(ptr++) != '"');
+      
+      
+      /*decompose the readMsg: readMsg timestamp*/
+      ptrCount = 0;
+      readMsg[1] = (unsigned char*)ptr;//readMsg timestamp start addr
+      while(*(ptr++) != '+') ptrCount++;
+      *(readMsg[1]+ptrCount) = (unsigned char)0x00;
+      
+      
+      //adjust ptr
+      while(*(ptr++) != '\n');
+      
+      /*decompose the readMsg: content*/
+      ptrCount = 0;
+      readMsg[2] = (unsigned char*)ptr;//readMsg content start addr
+      while((*ptr != '#')&&(*ptr != '\r'))
+      {
+        ptr++;
+        ptrCount++;
+      }
+      *(readMsg[2]+ptrCount+1) = (unsigned char)0x00;
+    
+      readFlag = true;
+    
+  }
+  return readFlag;
+}
+
+
+
+
+/******************************************************************************
+//接收所有英文短信
+//输入参数：content——内容
+            dst——目标对象
+//输出参数：状态（true or false）
+*******************************************************************************/
+bool ReadMsg2(unsigned char *(*readMsg2[])[], uint8_t *readCount2)
 {
 
   bool recvFlag = false;
-  recvCount = 0;
+  waitingCmdAck = true;//等待AT指令应答标志位置位
+  recvCmdAckCount = 0;
   SendString((unsigned char*)"AT+CMGL=");
   SendChar(0x22);
   SendString((unsigned char*)"ALL");
   SendChar(0x22);
   SendString((unsigned char*)"\r\n");
   Delay(200);
-  if (recvMsg[16]!='+'||recvMsg[17]!='C')
+  waitingCmdAck = false;//等待AT指令应答标志位复位
+  if (recvCmdAck[16]!='+'||recvCmdAck[17]!='C')
   {
     recvFlag = false;
   }
   else
   {
-    *readCount = 0;
-    char* ptr = strstr((char*)recvMsg, "+CMGL:");
+    *readCount2 = 0;
+    char *ptr = (char*)malloc(1024*sizeof(char));
+    ptr = strstr((char*)recvCmdAck, "+CMGL:");
     while(ptr != NULL)
     {//????待完善
       
@@ -333,59 +525,59 @@ bool ReadMsg(unsigned char *(*readMsg[])[], uint8_t *readCount)
       ptr += 7;
       /*decompose the readMsg: index*/
       uint16_t ptrCount = 0;
-      (*readMsg[*readCount])[0] = (unsigned char*)ptr;//readMsg index start addr
-      while(*(ptr++) != ',') ptrCount++;      
-      *((*readMsg[*readCount])[0]+ptrCount) = (unsigned char)0x00;
+      (*readMsg2[*readCount2])[0] = (unsigned char*)ptr;//readMsg index start addr
+      while(*(ptr++) != ',') ptrCount++;
+      *((*readMsg2[*readCount2])[1]+ptrCount) = (unsigned char)0x00;
       
       /*decompose the readMsg: status*/
-      ptr += 1;
+      ptr += 1;//???第三次循环跑飞
       ptrCount = 0;
-      (*readMsg[*readCount])[1] = (unsigned char*)ptr;//readMsg status start addr
+      (*readMsg2[*readCount2])[1] = (unsigned char*)ptr;//readMsg status start addr
       while(*(ptr++) != '"') ptrCount++;
-      *((*readMsg[*readCount])[1]+ptrCount) = (unsigned char)0x00;
+      *((*readMsg2[*readCount2])[1]+ptrCount) = (unsigned char)0x00;
       
       /*decompose the readMsg: call number*/
       ptr += 2;
       ptrCount = 0;
-      (*readMsg[*readCount])[2] = (unsigned char*)ptr;//readMsg call number start addr
+      (*readMsg2[*readCount2])[2] = (unsigned char*)ptr;//readMsg call number start addr
       while(*(ptr++) != '"') ptrCount++;
-      *((*readMsg[*readCount])[2]+ptrCount) = (unsigned char)0x00;
+      *((*readMsg2[*readCount2])[2]+ptrCount) = (unsigned char)0x00;
       
       //adjust ptr
       while(*(ptr++) != '"');
       
       /*decompose the readMsg: timestamp number*/
       ptrCount = 0;
-      (*readMsg[*readCount])[3] = (unsigned char*)ptr;//readMsg timestamp start addr
+      (*readMsg2[*readCount2])[3] = (unsigned char*)ptr;//readMsg timestamp start addr
       while(*(ptr++) != '"') ptrCount++;
-      *((*readMsg[*readCount])[3]+ptrCount) = (unsigned char)0x00;
+      *((*readMsg2[*readCount2])[3]+ptrCount) = (unsigned char)0x00;
       
       
       /*decompose the readMsg: num*/
       ptr += 1 ;
       ptrCount = 0;
-      (*readMsg[*readCount])[4] = (unsigned char*)ptr;//readMsg num start addr
+      (*readMsg2[*readCount2])[4] = (unsigned char*)ptr;//readMsg num start addr
       while(*(ptr++) != ',') ptrCount++;
-      *((*readMsg[*readCount])[4]+ptrCount) = (unsigned char)0x00;
+      *((*readMsg2[*readCount2])[4]+ptrCount) = (unsigned char)0x00;
       
       /*decompose the readMsg: length*/
       ptrCount = 0;
-      (*readMsg[*readCount])[5] = (unsigned char*)ptr;//readMsg length start addr
+      (*readMsg2[*readCount2])[5] = (unsigned char*)ptr;//readMsg length start addr
       while(*(ptr++) != '\r') ptrCount++;
-      *((*readMsg[*readCount])[5]+ptrCount) = (unsigned char)0x00;
+      *((*readMsg2[*readCount2])[5]+ptrCount) = (unsigned char)0x00;
       
       
       
       /*decompose the readMsg: content*/
       ptr += 1;
       ptrCount = 0;
-      (*readMsg[*readCount])[6] = (unsigned char*)ptr;//readMsg content start addr
+      (*readMsg2[*readCount2])[6] = (unsigned char*)ptr;//readMsg content start addr
       while(*(ptr++) != '\r') ptrCount++;
-      *((*readMsg[*readCount])[6]+ptrCount) = (unsigned char)0x00;
+      *((*readMsg2[*readCount2])[6]+ptrCount) = (unsigned char)0x00;
             
       
       ptr = strstr(ptr, "+CMGL:");//match the next substring
-      *readCount++;
+      *readCount2 += 1;
     }
     recvFlag = true;
   }
@@ -400,12 +592,14 @@ bool ReadMsg(unsigned char *(*readMsg[])[], uint8_t *readCount)
 *******************************************************************************/
 bool DeleteMsg(char* deleteNum)
 {
-  recvCount = 0;
+  waitingCmdAck = true;//等待AT指令应答标志位置位
+  recvCmdAckCount = 0;
   SendString((unsigned char*)"AT+CMGD=");
   SendString((unsigned char*)deleteNum);
   SendString((unsigned char*)"\r\n");
   Delay(20);
-  if(recvMsg[recvCount-4]!='O'||recvMsg[recvCount-3]!='K')
+  waitingCmdAck = false;//等待AT指令应答标志位复位
+  if(recvCmdAck[recvCmdAckCount-4]!='O'||recvCmdAck[recvCmdAckCount-3]!='K')
   {
     return false;
   }
@@ -428,13 +622,13 @@ void getRT(void)//???
 //输入参数：
 //输出参数：
 *******************************************************************************/
-bool registration(void)//????????
+bool registration(void)
 {   
-    unsigned char *(*readMsg[10])[4];
+    unsigned char *readMsg[3];
     uint8_t readCount = 0;
     WriteMsg("8618200259160", "zc?#1");
     Delay(500);//concrete delay time should be adjusted
-    ReadMsg(readMsg, &readCount);
+    //ReadMsg(readMsg, &readCount);
     if(1)//判断反馈信息
     {
       return true;

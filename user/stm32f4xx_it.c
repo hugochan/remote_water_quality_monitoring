@@ -23,7 +23,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "stm32f4xx_it.h"
-#include "stm32f4_discovery.h"
+#include "App.h"
 #include <stdbool.h>
 #include "Delay.h"
 /** @addtogroup STM32F4_Discovery_Peripheral_Examples
@@ -36,22 +36,35 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
+#define upperComputerNum ((unsigned char*)"8618200259160")
+#define machineNum ((unsigned char*)"8618328356422")    
 /* Private macro -------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
 uint32_t capture = 0;
-extern bool onlineFlag;
-extern __IO uint32_t CCR1_Val;
-extern __IO uint32_t CCR2_Val;
-extern __IO uint32_t CCR3_Val;
-extern __IO uint32_t CCR4_Val;
-extern unsigned char recvMsg[100];
-extern uint8_t recvCount;
-extern unsigned char *data[4];
+extern bool sjFlag;
+extern bool waitingCmdAck;
+extern bool newMsgAdvertiseFlag;
+extern bool gsmConfigFlag;
+extern bool waitingsjAckFlag;
+extern bool waitingjbAckFlag;
+extern bool sjAckTimeoutFlag;
+extern __IO uint32_t TIM5_Val;
+extern __IO uint32_t TIM2_Val;
+extern __IO uint32_t TIM3_Val;
+
+extern unsigned char recvCmdAck[100];
+extern uint16_t recvCmdAckCount;
+extern unsigned char recvNewMsgAdvertise[100];
+extern uint16_t recvNewMsgAdvertiseCount;
+extern char newMsgIndex;
+extern unsigned char *readMsg[7];
+extern uint8_t readCount;
+extern unsigned char *data[3];
 //bool recvFlag = false;
 /* Private function prototypes -----------------------------------------------*/
 /* Private functions ---------------------------------------------------------*/
 extern bool WriteMsg(char* dst, char *content);
-extern bool ReadMsg(unsigned char *(*readMsg[])[], uint8_t *readCount);
+extern bool ReadMsg(unsigned char* readMsg[], uint8_t *readCount, char msgIndex);
 extern bool DeleteMsg(char* deleteNum);
 /******************************************************************************/
 /*            Cortex-M4 Processor Exceptions Handlers                         */
@@ -173,10 +186,46 @@ void USART1_IRQHandler(void)
     if(USART_GetFlagStatus(USART1,USART_FLAG_RXNE)==SET)
     {
         USART_ClearFlag(USART1,USART_FLAG_RXNE);
-        recvMsg[recvCount] = USART_ReceiveData(USART1);
-        recvCount++;
+        if (waitingCmdAck == true)//读取AT指令应答的优先级高于读取新信息的优先级
+        {
+          recvCmdAck[recvCmdAckCount] = USART_ReceiveData(USART1);
+          recvCmdAckCount++;
+        }
+        else
+        {
+          //处理新信息
+          recvNewMsgAdvertise[recvNewMsgAdvertiseCount] = USART_ReceiveData(USART1);
+          recvNewMsgAdvertiseCount++;
+          if(recvNewMsgAdvertiseCount > 12)
+          {
+            newMsgIndex = recvNewMsgAdvertise[12];//每读取一条信息都删除，原则上新信息index不会超过9，所以newMsgIndex只取1位记录     
+            recvNewMsgAdvertiseCount = 0;
+            newMsgAdvertiseFlag = true;//新信息标志位置位（未避免中断嵌套（不被允许），不在此处读信息）  
+          }
+        }
     }
 }
+
+
+/**
+  * @brief  This function handles TIM2 global interrupt request.
+  * @param  None
+  * @retval None
+  */
+void TIM2_IRQHandler(void)
+{
+  if (TIM_GetITStatus(TIM2, TIM_IT_Update) != RESET)//处理jb应答定时中断
+  {
+    TIM_ClearITPendingBit(TIM2, TIM_IT_Update);
+
+    /* LED4 toggling with frequency = 4.57 Hz */
+    STM_EVAL_LEDToggle(LED4);
+
+    
+    TIM_SetCounter(TIM2, (uint32_t)0);
+  }
+}
+
 
 /**
   * @brief  This function handles TIM5 global interrupt request.
@@ -185,56 +234,46 @@ void USART1_IRQHandler(void)
   */
 void TIM5_IRQHandler(void)
 {
-  if (TIM_GetITStatus(TIM5, TIM_IT_CC1) != RESET)//处理短信查询定时中断
+  if (TIM_GetITStatus(TIM5, TIM_IT_Update) != RESET)//处理sj应答定时中断
   {
-    TIM_ClearITPendingBit(TIM5, TIM_IT_CC1);
+    TIM_ClearITPendingBit(TIM5, TIM_IT_Update);
 
     /* LED4 toggling with frequency = 4.57 Hz */
-    STM_EVAL_LEDToggle(LED4);
-   //unsigned char *(*readMsg[10])[7];
-   //uint8_t readCount = 0;
-   //ReadMsg(readMsg, &readCount);
-    
-    capture = TIM_GetCapture1(TIM5);
-    TIM_SetCompare1(TIM5, capture + CCR1_Val);
-    
-  }
-  else if (TIM_GetITStatus(TIM5, TIM_IT_CC2) != RESET)//处理反馈定时中断
-  {
-    TIM_ClearITPendingBit(TIM5, TIM_IT_CC2);
-
-    /* LED3 toggling with frequency = 9.15 Hz */
     STM_EVAL_LEDToggle(LED3);
-    capture = TIM_GetCapture2(TIM5);
-    TIM_SetCompare2(TIM5, capture + CCR2_Val);
-  }
-  else if (TIM_GetITStatus(TIM5, TIM_IT_CC3) != RESET)//处理事务定时中断
-  {
-    TIM_ClearITPendingBit(TIM5, TIM_IT_CC3);
-
-    /* LED5 toggling with frequency = 18.31 Hz */
-    STM_EVAL_LEDToggle(LED5);
-    
-    if (onlineFlag)
+    if(waitingsjAckFlag)//定时器截止时仍未收到数据应答
     {
-     //WriteMsg("8618200259160","sj?ph=[data]&flow=[data]&temp=[data]&state=[state]#[num]");
-    /*反馈处理*/
+      sjAckTimeoutFlag = true;
+      TIM_Cmd(TIM5, DISABLE);//关闭sj应答定时器计数器（即关闭本计数器）
     }
     
+    TIM_SetCounter(TIM5, (uint32_t)0);
     
-    capture = TIM_GetCapture3(TIM5);
-    TIM_SetCompare3(TIM5, capture + CCR3_Val);
-  }
-  else                                                //备用定时中断
-  {
-    TIM_ClearITPendingBit(TIM5, TIM_IT_CC4);
-
-    /* LED6 toggling with frequency = 36.62 Hz */
-    STM_EVAL_LEDToggle(LED6);
-    capture = TIM_GetCapture4(TIM5);
-    TIM_SetCompare4(TIM5, capture + CCR4_Val);
   }
 }
+
+/**
+  * @brief  This function handles TIM3 global interrupt request.
+  * @param  None
+  * @retval None
+  */
+void TIM3_IRQHandler(void)
+{
+  if (TIM_GetITStatus(TIM3, TIM_IT_Update) != RESET)//处理sj事务定时中断
+  {
+    TIM_ClearITPendingBit(TIM3, TIM_IT_Update);
+
+    /* LED4 toggling with frequency = 4.57 Hz */
+    STM_EVAL_LEDToggle(LED5);
+    if(gsmConfigFlag&&(waitingsjAckFlag==false))//当且仅当gsm配置成功&&sjack妥收条件成立，才会置位sjFlag并发送新sj信息
+    {
+      sjFlag = true;
+    }
+    
+    TIM_SetCounter(TIM3, (uint32_t)0);
+  }
+}
+
+
 
 /**
   * @}
