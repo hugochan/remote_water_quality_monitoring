@@ -19,12 +19,12 @@ bool ReadMsg2(unsigned char *(*readMsg2[])[], uint8_t *readCount2);
 bool DeleteMsg(char* deleteNum);
 bool DeleteAllMsgs(void);
 void getRT(void);
-
+void IO_Init(void);
 
 #define timerCounterFreq ((uint16_t)2000)
 
 __IO uint32_t TIM2_Val = 6000;//jb应答定时器10s(优先级最高)
-__IO uint32_t TIM5_Val = 12000;//sj应答定时器20s
+__IO uint32_t TIM5_Val = 12000;//注册阶段sj应答定时器||nj应答定时器20s
 __IO uint32_t TIM3_Val = 18000;//sj事务定时器30s（优先级最低）
 
 
@@ -38,10 +38,13 @@ bool gsmConfigFlag = false;//gsm配置成功标志位
 bool onlineFlag = false;//在线标志位（即向上位机注册成功）
 bool sjFlag = false;//数据事务标志位
 bool jbFlag = false;//警报标志位
+bool njFlag = false;//解除警报标志位
 bool waitingsjAckFlag = false;//等待数据应答标志位
-bool waitingjbAckFlag = false;//等待警报应答志位
+bool waitingjbAckFlag = false;//等待警报应答标志位
+bool waitingnjAckFlag = false;//等待解除警报应答标志位
 bool sjAckTimeoutFlag = false;//等待数据应答超时标志位
 bool jbAckTimeoutFlag = false;//等待警报应答超时标志位
+bool njAckTimeoutFlag = false;//等待解除警报应答超时标志位
 bool waitingCmdAck = false;//等待AT命令的应答
 bool newMsgAdvertiseFlag = false;//收到新信息标志位
 
@@ -66,7 +69,7 @@ void main()
   STM_EVAL_LEDOff(LED3);
   STM_EVAL_LEDOff(LED5);
   STM_EVAL_LEDOff(LED6);
-  
+  IO_Init();
   
   RCC_ClocksTypeDef RCC_Clocks;
   /* SysTick end of count event each 10ms */
@@ -82,7 +85,8 @@ void main()
   TIM5_Config();
   TIM3_Config();
   
-    
+  gsmConfigFlag = true;
+  onlineFlag = true;
   while(1)
   {
     if (gsmConfigFlag)
@@ -120,9 +124,18 @@ void main()
              }
              else if (strcmp((char*)readMsg[2], "jb?ack#")==0)//jb应答处理
              {
+                jbFlag = false;
                 waitingjbAckFlag = false;//jb应答成功，不再监测jb应答
                 jbAckTimeoutFlag = false;
              }
+             
+             else if (strcmp((char*)readMsg[2], "nj?ack#")==0)//nj应答处理
+             {
+                njFlag = false;
+                waitingnjAckFlag = false;//jb应答成功，不再监测jb应答
+                njAckTimeoutFlag = false;
+             }
+             
              else if ((strcmp((char*)readMsg[2], "kz?state=0#")==0)||(strcmp((char *)readMsg[2], "kz?state=1#")==0))
              {//kz命令响应
                
@@ -156,18 +169,60 @@ void main()
     
          }
          
-
-
+         if(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_11) == Bit_SET)//不太灵敏
+         {
+            while(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_11) == Bit_SET);
+            STM_EVAL_LEDOff(LED4);//解除警报指示
+            njFlag = true;  
+         }
+         if (njFlag&&(!waitingnjAckFlag))//发送nj信息
+         {
+            machineState = true;
+            atAdjust();
+            generalCounter = 0;
+            Success = WriteMsg(upperComputerNum, "nj?ph=[data]&state=1#num_date");
+            while (!Success) 
+            {
+              atAdjust();
+              Success = WriteMsg(upperComputerNum, "nj?ph=[data]&state=1#num_date");
+              generalCounter++;
+              if(generalCounter>2) break;
+            }
+            waitingnjAckFlag = true;
+            njFlag = false;
+            TIM_Cmd(TIM5, ENABLE);//打开nj应答定时器
+         }
+         
+         if (njAckTimeoutFlag)//nj应答超时重发
+         {
+           generalCounter = 0;
+           atAdjust();
+           Success = WriteMsg(upperComputerNum, "nj?ph=[data]&state=1#num_date");
+           while (!Success) 
+           {
+              atAdjust();
+              Success = WriteMsg(upperComputerNum, "nj?ph=[data]&state=1#num_date");
+              generalCounter++;
+              if(generalCounter>2) break;
+            }
+           njAckTimeoutFlag = false;
+           TIM_Cmd(TIM5, ENABLE);//打开nj应答定时器
+         }
+         
+         
+         
+         
+         
          if (jbFlag&&(!waitingjbAckFlag))//发送jb信息
          {
            machineState = false;
            generalCounter = 0;
            atAdjust();
-           Success = WriteMsg(upperComputerNum, "jb?ph=[data]&state=[state]#num_date");
+           Success = WriteMsg(upperComputerNum, "jb?ph=[data]&state=0#num_date");
            while (!Success) 
            {
               atAdjust();
-              Success = WriteMsg(upperComputerNum, "jb?ph=[data]&state=[state]#num_date");
+              Success = WriteMsg(upperComputerNum, "jb?ph=[data]&state=0#num_date");
               generalCounter++;
               if(generalCounter>2) break;
            }
@@ -180,11 +235,11 @@ void main()
          {
            generalCounter = 0;
            atAdjust();
-           Success = WriteMsg(upperComputerNum, "jb?ph=[data]&state=[state]#num_date");
+           Success = WriteMsg(upperComputerNum, "jb?ph=[data]&state=0#num_date");
            while (!Success) 
            {
               atAdjust();
-              Success = WriteMsg(upperComputerNum, "jb?ph=[data]&state=[state]#num_date");
+              Success = WriteMsg(upperComputerNum, "jb?ph=[data]&state=0#num_date");
               generalCounter++;
               if(generalCounter>2) break;
             }
@@ -807,12 +862,21 @@ void registration(void)
     }
 }
 
-/******************************************************************************
-//反馈处理函数
-//输入参数：
-//输出参数：
-*******************************************************************************/
-void handleFeedback(void)
+/**
+  * @brief  Initialize IO for nj trigger
+  * @param  None
+  * @retval None
+  */
+void IO_Init(void)
 {
+  GPIO_InitTypeDef  GPIO_InitStructure;
   
+  /* GPIOD Periph clock enable */
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB, ENABLE);
+   
+  /* Configure PB11 pin as input */
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_11;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN;
+  GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_DOWN;
+  GPIO_Init(GPIOB, &GPIO_InitStructure);
 }

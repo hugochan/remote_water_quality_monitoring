@@ -49,8 +49,10 @@ extern bool newMsgAdvertiseFlag;
 extern bool gsmConfigFlag;
 extern bool waitingsjAckFlag;
 extern bool waitingjbAckFlag;
+extern bool waitingnjAckFlag;
 extern bool sjAckTimeoutFlag;
 extern bool jbAckTimeoutFlag;
+extern bool njAckTimeoutFlag;
 extern __IO uint32_t TIM5_Val;
 extern __IO uint32_t TIM2_Val;
 extern __IO uint32_t TIM3_Val;
@@ -273,7 +275,7 @@ void TIM2_IRQHandler(void)
   */
 void TIM5_IRQHandler(void)
 {
-  if (TIM_GetITStatus(TIM5, TIM_IT_Update) != RESET)//处理初始注册阶段sj应答定时中断
+  if (TIM_GetITStatus(TIM5, TIM_IT_Update) != RESET)//处理初始注册阶段sj应答定时中断??||nj信息应答定时器
   {
     TIM_ClearITPendingBit(TIM5, TIM_IT_Update);
 
@@ -283,6 +285,12 @@ void TIM5_IRQHandler(void)
     {
       sjAckTimeoutFlag = true;
       //TIM_Cmd(TIM5, DISABLE);//关闭初始注册阶段sj应答定时器计数器（即关闭本计数器）
+    }
+    
+    if(gsmConfigFlag&&onlineFlag&&waitingnjAckFlag)    
+    {
+      njAckTimeoutFlag = true;
+      TIM_Cmd(TIM5, DISABLE);//关闭nj应答定时器
     }
     
     TIM_SetCounter(TIM5, (uint32_t)0);
