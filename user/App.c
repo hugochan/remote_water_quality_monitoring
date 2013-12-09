@@ -23,15 +23,20 @@ void IO_Init(void);
 
 #define timerCounterFreq ((uint16_t)2000)
 
-__IO uint32_t TIM2_Val = 6000;//jb应答定时器10s(优先级最高)
-__IO uint32_t TIM5_Val = 12000;//注册阶段sj应答定时器||nj应答定时器20s
-__IO uint32_t TIM3_Val = 18000;//sj事务定时器30s（优先级最低）
+__IO uint32_t TIM2_Val = 18000;//jb应答定时器30s(优先级最高)
+__IO uint32_t TIM5_Val = 18000;//注册阶段sj应答定时器||nj应答定时器30s
+__IO uint32_t TIM3_Val = 24000;//sj事务定时器40s（优先级最低）
 
 
 __IO uint16_t TimeDev = 100;//sys中断周期为1000/TimeDev=10ms
 __IO uint8_t UserButtonPressed = 0x00;
 unsigned char *data[3]={"8", "100", "0"};//ph flow state
-
+char sj[80] = "sj?ph=07&flow=0100&state=1#8618328356422_201312091200";
+//sj[6]='0';sj[7]='8';sj[14]='0';sj[15]='2';sj[16]='0';sj[17]='0';
+char zt[80] = "zt?ph=08&flow=0100&state=1#8618328356422_201312091200";
+char kz[80] = "kz?ack#8618328356422_201312091200";
+char jb[80] = "jb?ph=13&state=0#8618328356422_201312091200";
+char nj[80] = "nj?ph=08&state=1#8618328356422_201312091200";
 
 bool machineState = false;//机器状态标志位（flase for 关机，true for 工作）
 bool gsmConfigFlag = false;//gsm配置成功标志位
@@ -61,12 +66,12 @@ void main()
 {
   /* Initialize User_Button and Leds mounted on STM32F4-Discovery board */
   STM_EVAL_PBInit(BUTTON_USER, BUTTON_MODE_EXTI); 
-  STM_EVAL_LEDInit(LED4);
-  STM_EVAL_LEDInit(LED3);
+  STM_EVAL_LEDInit(LED4);//警报指示灯（黄）
+  STM_EVAL_LEDInit(LED3);//状态指示灯
   STM_EVAL_LEDInit(LED5);
   STM_EVAL_LEDInit(LED6);
   STM_EVAL_LEDOff(LED4);
-  STM_EVAL_LEDOff(LED3);
+  STM_EVAL_LEDOn(LED3);
   STM_EVAL_LEDOff(LED5);
   STM_EVAL_LEDOff(LED6);
   IO_Init();
@@ -85,8 +90,8 @@ void main()
   TIM5_Config();
   TIM3_Config();
   
-  gsmConfigFlag = true;
-  onlineFlag = true;
+  //gsmConfigFlag = true;
+  //onlineFlag = true;
   while(1)
   {
     if (gsmConfigFlag)
@@ -114,10 +119,12 @@ void main()
              else if (strcmp((char*)readMsg[2], "zt?#")==0)//zt命令响应
              {
                generalCounter = 0; 
-               Success = WriteMsg(upperComputerNum,"zt?ph=[data]&flow=[data]&state=[state]#num_date");
+               if (machineState) zt[25] = '1';
+               else zt[25] = '0';
+               Success = WriteMsg(upperComputerNum, zt);
                while (!Success) 
                {
-                 Success = WriteMsg(upperComputerNum,"zt?ph=[data]&flow=[data]&state=[state]#num_date");
+                 Success = WriteMsg(upperComputerNum, zt);
                  generalCounter++;
                  if(generalCounter>2) break;
                }
@@ -139,14 +146,22 @@ void main()
              else if ((strcmp((char*)readMsg[2], "kz?state=0#")==0)||(strcmp((char *)readMsg[2], "kz?state=1#")==0))
              {//kz命令响应
                
-               if (*(readMsg[2]+9) == '0') machineState = false;
-               else if (*(readMsg[2]+9) == '1') machineState = true; 
+               if (*(readMsg[2]+9) == '0')
+               { 
+                 machineState = false;
+                 STM_EVAL_LEDOff(LED3);//指示状态为停机
+               }
+               else if (*(readMsg[2]+9) == '1') 
+               {
+                 machineState = true;
+                 STM_EVAL_LEDOn(LED3);//指示状态为工作
+               }
                
                generalCounter = 0; 
-               Success = WriteMsg(upperComputerNum,"kz?ack#num_date");
+               Success = WriteMsg(upperComputerNum, kz);
                while (!Success) 
                {
-                 Success = WriteMsg(upperComputerNum,"kz?ack#num_date");
+                 Success = WriteMsg(upperComputerNum, kz);
                  generalCounter++;
                  if(generalCounter>2) break;
                }
@@ -173,6 +188,7 @@ void main()
          {
             while(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_11) == Bit_SET);
             STM_EVAL_LEDOff(LED4);//解除警报指示
+            STM_EVAL_LEDOn(LED3);//指示状态为工作
             njFlag = true;  
          }
          if (njFlag&&(!waitingnjAckFlag))//发送nj信息
@@ -180,11 +196,11 @@ void main()
             machineState = true;
             atAdjust();
             generalCounter = 0;
-            Success = WriteMsg(upperComputerNum, "nj?ph=[data]&state=1#num_date");
+            Success = WriteMsg(upperComputerNum, nj);
             while (!Success) 
             {
               atAdjust();
-              Success = WriteMsg(upperComputerNum, "nj?ph=[data]&state=1#num_date");
+              Success = WriteMsg(upperComputerNum, nj);
               generalCounter++;
               if(generalCounter>2) break;
             }
@@ -197,11 +213,11 @@ void main()
          {
            generalCounter = 0;
            atAdjust();
-           Success = WriteMsg(upperComputerNum, "nj?ph=[data]&state=1#num_date");
+           Success = WriteMsg(upperComputerNum, nj);
            while (!Success) 
            {
               atAdjust();
-              Success = WriteMsg(upperComputerNum, "nj?ph=[data]&state=1#num_date");
+              Success = WriteMsg(upperComputerNum, nj);
               generalCounter++;
               if(generalCounter>2) break;
             }
@@ -218,11 +234,11 @@ void main()
            machineState = false;
            generalCounter = 0;
            atAdjust();
-           Success = WriteMsg(upperComputerNum, "jb?ph=[data]&state=0#num_date");
+           Success = WriteMsg(upperComputerNum, jb);
            while (!Success) 
            {
               atAdjust();
-              Success = WriteMsg(upperComputerNum, "jb?ph=[data]&state=0#num_date");
+              Success = WriteMsg(upperComputerNum, jb);
               generalCounter++;
               if(generalCounter>2) break;
            }
@@ -235,11 +251,11 @@ void main()
          {
            generalCounter = 0;
            atAdjust();
-           Success = WriteMsg(upperComputerNum, "jb?ph=[data]&state=0#num_date");
+           Success = WriteMsg(upperComputerNum, jb);
            while (!Success) 
            {
               atAdjust();
-              Success = WriteMsg(upperComputerNum, "jb?ph=[data]&state=0#num_date");
+              Success = WriteMsg(upperComputerNum, jb);
               generalCounter++;
               if(generalCounter>2) break;
             }
@@ -252,11 +268,13 @@ void main()
          {
            generalCounter = 0;
            atAdjust();//调整指令步伐
-           Success = WriteMsg(upperComputerNum, "sj?ph=[data]&flow=[data]&state=[state]#num_date");
+           if (machineState) sj[25] = '1';
+           else sj[25] = '0';
+           Success = WriteMsg(upperComputerNum, sj);
            while (!Success) 
            {
               atAdjust();
-              Success = WriteMsg(upperComputerNum, "sj?ph=[data]&flow=[data]&state=[state]#num_date");
+              Success = WriteMsg(upperComputerNum, sj);
               generalCounter++;
               if(generalCounter>2) break;//一共尝试三次
             }
@@ -852,11 +870,13 @@ void registration(void)
 {   
     atAdjust();
     generalCounter = 0;
-    Success = WriteMsg(upperComputerNum, "sj?ph=[data]&flow=[data]&state=[state]#num_date");
+    if (machineState) sj[25] = '1';
+    else sj[25] = '0';
+    Success = WriteMsg(upperComputerNum, sj);
     while (!Success) 
     {
         atAdjust();
-        Success = WriteMsg(upperComputerNum, "sj?ph=[data]&flow=[data]&state=[state]#num_date");
+        Success = WriteMsg(upperComputerNum, sj);
         generalCounter++;
         if(generalCounter>2) break;
     }

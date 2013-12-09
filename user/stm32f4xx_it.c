@@ -191,7 +191,8 @@ void EXTI0_IRQHandler(void)
 {
  
      UserButtonPressed = 0x01;
-     STM_EVAL_LEDOn(LED4);
+     STM_EVAL_LEDOn(LED4);//指示警报
+     STM_EVAL_LEDOff(LED3);//指示状态为停机
      jbFlag = true;
      /* Clear the EXTI line pending bit */
      EXTI_ClearITPendingBit(USER_BUTTON_EXTI_LINE);
