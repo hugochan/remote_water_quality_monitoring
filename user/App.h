@@ -31,9 +31,9 @@
 #include <stdlib.h>
 
 /* defines ------------------------------------------------------------------*/
-#define upperComputerNum ((char*)"8618200259160")
-#define machineNum ((unsigned char*)"8618328356422")
-
+#define machineNum ((unsigned char*)"8615542893440")
+#define upperComputerNum ((char*)"8618328356422")
+#define Factor ((uint8_t)2)
 /* Includes ------------------------------------------------------------------*/    
     
     

@@ -18,27 +18,29 @@ bool ReadMsg(unsigned char* readMsg[], char* msgIndex);
 bool ReadMsg2(unsigned char *(*readMsg2[])[], uint8_t *readCount2);
 bool DeleteMsg(char* deleteNum);
 bool DeleteAllMsgs(void);
-void getRT(void);
+bool setRT(void);
+bool getRT(char *timeStr);
 void IO_Init(void);
 
 #define timerCounterFreq ((uint16_t)2000)
-
-__IO uint32_t TIM2_Val = 18000;//jb应答定时器30s(优先级最高)
-__IO uint32_t TIM5_Val = 18000;//注册阶段sj应答定时器||nj应答定时器30s
-__IO uint32_t TIM3_Val = 24000;//sj事务定时器40s（优先级最低）
+ 
+__IO uint32_t TIM2_Val = 36000;//jb应答定时器60s(优先级最高,低于uart)
+__IO uint32_t TIM5_Val = 36000;//注册阶段sj应答定时器||nj应答定时器60s
+__IO uint32_t TIM3_Val = 36000;//sj事务定时器60s（优先级最低）
 
 
 __IO uint16_t TimeDev = 100;//sys中断周期为1000/TimeDev=10ms
 __IO uint8_t UserButtonPressed = 0x00;
 unsigned char *data[3]={"8", "100", "0"};//ph flow state
-char sj[80] = "sj?ph=07&flow=0100&state=1#8618328356422_201312091200";
-//sj[6]='0';sj[7]='8';sj[14]='0';sj[15]='2';sj[16]='0';sj[17]='0';
-char zt[80] = "zt?ph=08&flow=0100&state=1#8618328356422_201312091200";
-char kz[80] = "kz?ack#8618328356422_201312091200";
-char jb[80] = "jb?ph=13&state=0#8618328356422_201312091200";
-char nj[80] = "nj?ph=08&state=1#8618328356422_201312091200";
+char sj[80] = "sj?ph=07&flow=050&state=1#15542893440_201312091200";
+char zt[80] = "zt?ph=08&flow=050&state=1#15542893440_201312091200";
+char kz[80] = "kz?ack#15542893440_201312091200";
+char jb[80] = "jb?ph=13&state=0#15542893440_201312091200";
+char nj[80] = "nj?ph=08&state=1#15542893440_201312091200";
 
-bool machineState = false;//机器状态标志位（flase for 关机，true for 工作）
+
+bool firstTime = false;
+bool machineState = true;//机器状态标志位（flase for 关机，true for 工作）
 bool gsmConfigFlag = false;//gsm配置成功标志位
 bool onlineFlag = false;//在线标志位（即向上位机注册成功）
 bool sjFlag = false;//数据事务标志位
@@ -61,6 +63,17 @@ uint16_t recvNewMsgAdvertiseCount = 0;
 char newMsgIndex[3];
 unsigned char *readMsg[3];
 char generalCounter = 0;
+char timeStr[14];
+char flow = 50;
+char ph = 7;
+
+
+uint8_t jbNum = 0;
+uint8_t njNum = 0;
+
+
+
+
 //extern bool recvFlag;
 void main()
 {
@@ -83,20 +96,28 @@ void main()
   NVIC_SetPriority (SysTick_IRQn, 1); //设置systick为最高优先级
   SysTick->CTRL  &= ~SysTick_CTRL_ENABLE_Msk;//失能systick
  
-  //getRT();//获得当前时间
   USART1_Config();
   NVIC_Config();
   TIM2_Config();
   TIM5_Config();
   TIM3_Config();
+  //WriteMsg(upperComputerNum, "agsdg");
   
   //gsmConfigFlag = true;
   //onlineFlag = true;
+ 
+ 
   while(1)
   {
     if (gsmConfigFlag)
     {
-       if (onlineFlag)
+       if (firstTime == false) 
+       {
+          registration();
+          firstTime = true;
+       }
+      
+        if (onlineFlag)
        {
          if (newMsgAdvertiseFlag)
          {
@@ -119,8 +140,31 @@ void main()
              else if (strcmp((char*)readMsg[2], "zt?#")==0)//zt命令响应
              {
                generalCounter = 0; 
-               if (machineState) zt[25] = '1';
-               else zt[25] = '0';
+               if (machineState) zt[24] = '1';
+               else zt[24] = '0';
+               if(ph<10)
+               {
+                 zt[6] = '0';
+                 zt[7] = ph+48;
+               
+               }
+               else if(ph<15)
+               {
+                  zt[6] = '1';
+                  zt[7] = ph-10+48;
+               }
+               
+               if(flow<10) 
+               {
+                  zt[15] = '0';
+                  zt[16] = flow +48;
+                }
+                else if(flow<100)
+                {
+                  zt[15] = (flow/10)+48;
+                  zt[16] = (flow%10)+48;
+                }
+            
                Success = WriteMsg(upperComputerNum, zt);
                while (!Success) 
                {
@@ -184,102 +228,236 @@ void main()
     
          }
          
-         if(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_11) == Bit_SET)//不太灵敏
-         {
-            while(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_11) == Bit_SET);
-            STM_EVAL_LEDOff(LED4);//解除警报指示
-            STM_EVAL_LEDOn(LED3);//指示状态为工作
-            njFlag = true;  
-         }
-         if (njFlag&&(!waitingnjAckFlag))//发送nj信息
-         {
-            machineState = true;
-            atAdjust();
-            generalCounter = 0;
-            Success = WriteMsg(upperComputerNum, nj);
-            while (!Success) 
-            {
-              atAdjust();
-              Success = WriteMsg(upperComputerNum, nj);
-              generalCounter++;
-              if(generalCounter>2) break;
-            }
-            waitingnjAckFlag = true;
-            njFlag = false;
-            TIM_Cmd(TIM5, ENABLE);//打开nj应答定时器
-         }
-         
-         if (njAckTimeoutFlag)//nj应答超时重发
-         {
-           generalCounter = 0;
-           atAdjust();
-           Success = WriteMsg(upperComputerNum, nj);
-           while (!Success) 
+         else
+         {  
+           /*解除警报触发*/
+           if(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_11) == Bit_SET)
            {
-              atAdjust();
-              Success = WriteMsg(upperComputerNum, nj);
-              generalCounter++;
-              if(generalCounter>2) break;
-            }
-           njAckTimeoutFlag = false;
-           TIM_Cmd(TIM5, ENABLE);//打开nj应答定时器
-         }
-         
-         
-         
-         
-         
-         if (jbFlag&&(!waitingjbAckFlag))//发送jb信息
-         {
-           machineState = false;
-           generalCounter = 0;
-           atAdjust();
-           Success = WriteMsg(upperComputerNum, jb);
-           while (!Success) 
-           {
-              atAdjust();
-              Success = WriteMsg(upperComputerNum, jb);
-              generalCounter++;
-              if(generalCounter>2) break;
+              while(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_11) == Bit_SET);
+              STM_EVAL_LEDOff(LED4);//解除警报指示
+              STM_EVAL_LEDOn(LED3);//指示状态为工作
+              njFlag = true;  
            }
-           waitingjbAckFlag = true;
-           jbFlag = false;
-           TIM_Cmd(TIM2, ENABLE);//打开jb应答定时器
-         }
-         
-         if (jbAckTimeoutFlag)//jb应答超时重发
-         {
-           generalCounter = 0;
-           atAdjust();
-           Success = WriteMsg(upperComputerNum, jb);
-           while (!Success) 
+           /*ph增触发*/
+           if(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_12) == Bit_SET)
            {
-              atAdjust();
-              Success = WriteMsg(upperComputerNum, jb);
-              generalCounter++;
-              if(generalCounter>2) break;
-            }
-           jbAckTimeoutFlag = false;
-           TIM_Cmd(TIM2, ENABLE);//打开jb应答定时器
-         }
-         
-         
-         if (sjFlag)//定期发送sj信息，注册成功后不验证应答信息
-         {
-           generalCounter = 0;
-           atAdjust();//调整指令步伐
-           if (machineState) sj[25] = '1';
-           else sj[25] = '0';
-           Success = WriteMsg(upperComputerNum, sj);
-           while (!Success) 
+             STM_EVAL_LEDOn(LED5);//ph触发指示
+             while(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_12) == Bit_SET);
+             STM_EVAL_LEDOff(LED5);
+             ph = (ph+1)%15; 
+           }
+           /*ph减触发*/
+           if(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_13) == Bit_SET)
            {
+             STM_EVAL_LEDOn(LED5);//ph触发指示
+             while(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_13) == Bit_SET);
+             STM_EVAL_LEDOff(LED5);
+             if (ph==0) ph = 14;
+             else ph -= 1;
+           }
+           /*flow增触发*/
+           if(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_14) == Bit_SET)
+           {
+             STM_EVAL_LEDOn(LED6);//flow触发指示
+             while(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_14) == Bit_SET);
+             STM_EVAL_LEDOff(LED6);
+             flow = (flow+1)%100;
+           }
+           /*flow减触发*/
+           if(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_15) == Bit_SET)
+           {
+             STM_EVAL_LEDOn(LED6);//flow触发指示
+             while(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_15) == Bit_SET);
+             STM_EVAL_LEDOff(LED6);
+             if (flow == 0) flow = 99;
+             else flow -= 1;
+           }
+           
+           
+           
+           
+           if (njFlag&&(!waitingnjAckFlag)&&(!newMsgAdvertiseFlag))//发送nj信息
+           {
+              njNum = 1;
+              machineState = true;
               atAdjust();
-              Success = WriteMsg(upperComputerNum, sj);
-              generalCounter++;
-              if(generalCounter>2) break;//一共尝试三次
-            }
-           sjFlag = false;
-         }
+              getRT(timeStr);
+              memcpy(strstr(nj, "_")+1, timeStr, 14);
+             if(ph<10)
+             {
+                nj[6] = '0';
+                nj[7] = ph+48;
+                 
+             }
+             else if(ph<15)
+             {
+                nj[6] = '1';
+                nj[7] = ph-10+48;
+              }
+              generalCounter = 0;
+              Success = WriteMsg(upperComputerNum, nj);
+              while (!Success) 
+              {
+                atAdjust();
+                Success = WriteMsg(upperComputerNum, nj);
+                generalCounter++;
+                if(generalCounter>2) break;
+              }
+              waitingnjAckFlag = true;
+              njFlag = false;
+              TIM_Cmd(TIM5, ENABLE);//打开nj应答定时器
+           }
+           
+           if (njAckTimeoutFlag&&(!newMsgAdvertiseFlag))//nj应答超时重发
+           {
+              njNum++;
+              if (njNum<4)
+              {  
+               atAdjust();
+               getRT(timeStr);
+               memcpy(strstr(nj, "_")+1, timeStr, 14);
+               if(ph<10)
+               {
+                nj[6] = '0';
+                nj[7] = ph+48;
+                   
+                }
+               else if(ph<15)
+               {
+                  nj[6] = '1';
+                  nj[7] = ph-10+48;
+                }
+               generalCounter = 0;
+               Success = WriteMsg(upperComputerNum, nj);
+               while (!Success) 
+               {
+                  atAdjust();
+                  Success = WriteMsg(upperComputerNum, nj);
+                  generalCounter++;
+                  if(generalCounter>2) break;
+                }
+               njAckTimeoutFlag = false;
+               TIM_Cmd(TIM5, ENABLE);//打开nj应答定时器
+              }
+              else njNum = 0;
+           }
+           
+         }  
+           
+           
+           
+           if (jbFlag&&(!waitingjbAckFlag)&&(!newMsgAdvertiseFlag))//发送jb信息
+           {
+             jbNum = 1;
+             machineState = false;
+             atAdjust();
+             getRT(timeStr);
+             memcpy(strstr(jb, "_")+1, timeStr, 14);
+             if(ph<10)
+             {
+                jb[6] = '0';
+                jb[7] = ph+48;
+                 
+             }
+             else if(ph<15)
+             {
+                jb[6] = '1';
+                jb[7] = ph-10+48;
+              }
+             
+             generalCounter = 0;
+             Success = WriteMsg(upperComputerNum, jb);
+             while (!Success) 
+             {
+                atAdjust();
+                Success = WriteMsg(upperComputerNum, jb);
+                generalCounter++;
+                if(generalCounter>2) break;
+             }
+             waitingjbAckFlag = true;
+             jbFlag = false;
+             TIM_Cmd(TIM2, ENABLE);//打开jb应答定时器
+           }
+           
+           if (jbAckTimeoutFlag&&(!newMsgAdvertiseFlag))//jb应答超时重发
+           {
+              jbNum++;
+              if (jbNum < 4)
+              {
+               atAdjust();
+               getRT(timeStr);
+               memcpy(strstr(jb, "_")+1, timeStr, 14);
+               
+               if(ph<10)
+               {
+                  jb[6] = '0';
+                  jb[7] = ph+48;
+                   
+               }
+               else if(ph<15)
+               {
+                  jb[6] = '1';
+                  jb[7] = ph-10+48;
+                }
+        
+               generalCounter = 0;
+               Success = WriteMsg(upperComputerNum, jb);
+               while (!Success) 
+               {
+                  atAdjust();
+                  Success = WriteMsg(upperComputerNum, jb);
+                  generalCounter++;
+                  if(generalCounter>2) break;
+                }
+               jbAckTimeoutFlag = false;
+               TIM_Cmd(TIM2, ENABLE);//打开jb应答定时器
+              }
+              else jbNum = 0;
+           }
+           
+           
+           if (sjFlag&&(!newMsgAdvertiseFlag))//定期发送sj信息，注册成功后不验证应答信息
+           {
+             generalCounter = 0;
+             atAdjust();//调整指令步伐
+             if (machineState) sj[24] = '1';
+             else sj[24] = '0';
+             
+             if(ph<10)
+             {
+                sj[6] = '0';
+                sj[7] = ph+48;
+                 
+             }
+             else if(ph<15)
+             {
+               sj[6] = '1';
+               sj[7] = ph-10+48;
+              }
+              
+             if(flow<10) 
+             {
+                sj[15] = '0';
+                sj[16] = flow +48;
+              }
+              else if(flow<100)
+              {
+                sj[15] = (flow/10)+48;
+                sj[16] = (flow%10)+48;
+              }
+             
+             getRT(timeStr);
+             memcpy(strstr(sj, "_")+1, timeStr, 14);
+             Success = WriteMsg(upperComputerNum, sj);
+             while (!Success) 
+             {
+                atAdjust();
+                Success = WriteMsg(upperComputerNum, sj);
+                generalCounter++;
+                if(generalCounter>2) break;//一共尝试三次
+              }
+             sjFlag = false;
+           }
 
        }
        
@@ -304,6 +482,46 @@ void main()
                   /*注册成功*/
                   onlineFlag = true;              
                   sjAckTimeoutFlag = false;
+                 }
+                else if (strcmp((char*)readMsg[2], "zt?#")==0)//zt命令响应
+                {
+                 TIM_SetCounter(TIM3, (uint32_t)0);//软件清零sj事务定时器，防止注册成功后立即发送重复信息
+                  /*注册成功*/
+                 onlineFlag = true;              
+                 sjAckTimeoutFlag = false;
+                 generalCounter = 0; 
+                 if (machineState) zt[24] = '1';
+                 else zt[24] = '0';
+                 if(ph<10)
+                 {
+                   zt[6] = '0';
+                   zt[7] = ph+48;
+                 
+                 }
+                 else if(ph<15)
+                 {
+                    zt[6] = '1';
+                    zt[7] = ph-10+48;
+                 }
+                 
+                 if(flow<10) 
+                 {
+                    zt[15] = '0';
+                    zt[16] = flow +48;
+                  }
+                  else if(flow<100)
+                  {
+                    zt[15] = (flow/10)+48;
+                    zt[16] = (flow%10)+48;
+                  }
+              
+                 Success = WriteMsg(upperComputerNum, zt);
+                 while (!Success) 
+                 {
+                   Success = WriteMsg(upperComputerNum, zt);
+                   generalCounter++;
+                   if(generalCounter>2) break;
+                 }
                 }
               }
               //delete the sj?ack message
@@ -319,7 +537,7 @@ void main()
             
           }
           
-          if(sjAckTimeoutFlag)
+          if(sjAckTimeoutFlag&&(!newMsgAdvertiseFlag))
           {
             registration();
             sjAckTimeoutFlag = false;
@@ -346,7 +564,7 @@ void NVIC_Config(void)
     NVIC_InitTypeDef NVIC_InitStructure;
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_3);
     
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 4;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
     NVIC_InitStructure.NVIC_IRQChannel  = USART1_IRQn;
     NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
@@ -576,11 +794,11 @@ bool gsmConfig(void)//config text function of gsm
       }
       else
       {
-      
+        if(!setRT()) return false;
+        else return true;
       }
     
     }
-    return true;
 }
 /******************************************************************************
 //握手测试
@@ -629,7 +847,7 @@ bool WriteMsg(char* dst, char* content)
     recvCmdAckCount = 0;
     SendString((unsigned char*)"AT+CMGS=");
     SendChar(0x22);//"
-    SendString((unsigned char*)dst);//destination call number
+    SendString((unsigned char*)(dst+2));//destination call number
     SendChar(0x22);//"
     SendString((unsigned char*)"\r\n");
     Delay(10);
@@ -637,7 +855,7 @@ bool WriteMsg(char* dst, char* content)
     SendChar(0x1A);
     Delay(100);
     waitingCmdAck = false;//等待AT指令应答标志位复位
-    if (recvCmdAck[26] != '>')
+    if (recvCmdAck[24] != '>')
     {
       return false;
     }
@@ -853,14 +1071,62 @@ bool DeleteAllMsgs(void)
 }
 
 /******************************************************************************
+//设置当前时间
+//输入参数：
+//输出参数：bool
+*******************************************************************************/
+bool setRT(void)//???
+{
+  waitingCmdAck = true;
+  recvCmdAckCount = 0;
+  SendString((unsigned char*)"AT+CCLK=");
+  SendChar(0x22);
+  SendString((unsigned char*)"13/12/09,16:40:00");
+  SendChar(0x22);
+  SendString((unsigned char*)"\r\n");
+  Delay(20);
+  waitingCmdAck = false;//等待AT指令应答标志位复位
+  if((recvCmdAck[recvCmdAckCount-4]!='O')&&(recvCmdAck[recvCmdAckCount-3]!='K')) return false;
+  else return true;
+}
+
+/******************************************************************************
 //获得当前时间
 //输入参数：
-//输出参数：
+//输出参数：bool
 *******************************************************************************/
-void getRT(void)//???
+bool getRT(char *timeStr)
 {
-    //AT+CCLK
+  waitingCmdAck = true;
+  recvCmdAckCount = 0;
+  SendString((unsigned char*)"AT+CCLK?");
+  SendString((unsigned char*)"\r\n");
+  Delay(20);
+  waitingCmdAck = false;//等待AT指令应答标志位复位
+  if(recvCmdAck[14]!='L') return false;
+  else
+  {
+    char *ptr = strstr((char*)recvCmdAck, "+CCLK:");
+    ptr += 6;
+    timeStr[0] = '2';
+    timeStr[1] = '0';
+    timeStr[2] = *ptr;
+    timeStr[3] = *(ptr+1);
+    timeStr[4] = *(ptr+3);
+    timeStr[5] = *(ptr+4);
+    timeStr[6] = *(ptr+6);
+    timeStr[7] = *(ptr+7);
+    timeStr[8] = *(ptr+9);
+    timeStr[9] = *(ptr+10);
+    timeStr[10] = *(ptr+12);
+    timeStr[11] = *(ptr+13);
+    timeStr[12] = *(ptr+15);
+    timeStr[13] = *(ptr+16);
+    return true;
+  }
 }
+
+
 /******************************************************************************
 //向上位机控制中心注册信息
 //输入参数：
@@ -869,10 +1135,31 @@ void getRT(void)//???
 void registration(void)
 {   
     atAdjust();
+    getRT(timeStr);
+    memcpy(strstr(sj, "_")+1, timeStr, 14);
+    if (machineState) sj[24] = '1';
+    else sj[24] = '0';
+    if(ph<10) sj[7] = ph+48;
+    else if(ph<15)
+    {
+      sj[6] = 1;
+      sj[7] = ph-10+48;
+    }
+    
+    if(flow<10) 
+    {
+      sj[15] = '0';
+      sj[16] = flow +48;
+    }
+    else if(flow<100)
+    {
+      sj[15] = (flow/10)+48;
+      sj[16] = (flow%10)+48;
+    }
     generalCounter = 0;
-    if (machineState) sj[25] = '1';
-    else sj[25] = '0';
-    Success = WriteMsg(upperComputerNum, sj);
+    if (newMsgAdvertiseFlag) Success = true;
+    else Success = WriteMsg(upperComputerNum, sj);
+    
     while (!Success) 
     {
         atAdjust();
@@ -895,7 +1182,7 @@ void IO_Init(void)
   RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB, ENABLE);
    
   /* Configure PB11 pin as input */
-  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_11;
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_11||GPIO_Pin_12||GPIO_Pin_13||GPIO_Pin_14||GPIO_Pin_15;
   GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN;
   GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_DOWN;
   GPIO_Init(GPIOB, &GPIO_InitStructure);

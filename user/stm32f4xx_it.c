@@ -38,7 +38,9 @@
 /* Private define ------------------------------------------------------------*/   
 /* Private macro -------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
-uint32_t capture = 0;
+uint8_t factor2 = 0;
+uint8_t factor5 = 0;
+uint8_t factor3 = 0;
 extern __IO uint8_t UserButtonPressed;
 bool newMsgComingFlag = false;//新信息到来标志位
 extern bool onlineFlag;
@@ -256,16 +258,21 @@ void TIM2_IRQHandler(void)
   if (TIM_GetITStatus(TIM2, TIM_IT_Update) != RESET)//处理jb应答定时中断
   {
     TIM_ClearITPendingBit(TIM2, TIM_IT_Update);
-
-    /* LED4 toggling with frequency = 4.57 Hz */
-    STM_EVAL_LEDToggle(LED4);
-    if(waitingjbAckFlag)//警报应答超时
+    factor2++;
+    if (factor2 == Factor)
     {
-      jbAckTimeoutFlag = true;
+      factor2 = 0;
+      /* LED4 toggling with frequency = 4.57 Hz */
+      STM_EVAL_LEDToggle(LED4);
+      if(waitingjbAckFlag)//警报应答超时
+      {
+        jbAckTimeoutFlag = true;
+      }
+      TIM_Cmd(TIM2, DISABLE);//关闭jb应答定时器
+      TIM_SetCounter(TIM2, (uint32_t)0);
+    
     }
-    TIM_Cmd(TIM2, DISABLE);//关闭jb应答定时器
-    TIM_SetCounter(TIM2, (uint32_t)0);
-  }
+   }
 }
 
 
@@ -279,21 +286,24 @@ void TIM5_IRQHandler(void)
   if (TIM_GetITStatus(TIM5, TIM_IT_Update) != RESET)//处理初始注册阶段sj应答定时中断??||nj信息应答定时器
   {
     TIM_ClearITPendingBit(TIM5, TIM_IT_Update);
-
-    /* LED4 toggling with frequency = 4.57 Hz */
-    STM_EVAL_LEDToggle(LED3);
-    if(gsmConfigFlag&&(!onlineFlag))
+    factor5++;
+    if (factor5 == Factor)
     {
-      sjAckTimeoutFlag = true;
-      //TIM_Cmd(TIM5, DISABLE);//关闭初始注册阶段sj应答定时器计数器（即关闭本计数器）
+      factor5 = 0;
+      /* LED4 toggling with frequency = 4.57 Hz */
+      STM_EVAL_LEDToggle(LED3);
+      if(gsmConfigFlag&&(!onlineFlag))
+      {
+        sjAckTimeoutFlag = true;
+        //TIM_Cmd(TIM5, DISABLE);//关闭初始注册阶段sj应答定时器计数器（即关闭本计数器）
+      }
+      
+      if(gsmConfigFlag&&onlineFlag&&waitingnjAckFlag)    
+      {
+        njAckTimeoutFlag = true;
+        TIM_Cmd(TIM5, DISABLE);//关闭nj应答定时器
+      }
     }
-    
-    if(gsmConfigFlag&&onlineFlag&&waitingnjAckFlag)    
-    {
-      njAckTimeoutFlag = true;
-      TIM_Cmd(TIM5, DISABLE);//关闭nj应答定时器
-    }
-    
     TIM_SetCounter(TIM5, (uint32_t)0);
     
   }
@@ -309,12 +319,16 @@ void TIM3_IRQHandler(void)
   if (TIM_GetITStatus(TIM3, TIM_IT_Update) != RESET)//处理sj事务定时中断
   {
     TIM_ClearITPendingBit(TIM3, TIM_IT_Update);
-
-    /* LED4 toggling with frequency = 4.57 Hz */
-    STM_EVAL_LEDToggle(LED5);
-    if(gsmConfigFlag&&onlineFlag)//当且仅当gsm配置成功&&sjack妥收条件成立，才会置位sjFlag并发送新sj信息
+    factor3++;
+    if (factor3 == Factor)
     {
-      sjFlag = true;
+      factor3 = 0;
+      /* LED4 toggling with frequency = 4.57 Hz */
+      STM_EVAL_LEDToggle(LED5);
+      if(gsmConfigFlag&&onlineFlag)//当且仅当gsm配置成功&&sjack妥收条件成立，才会置位sjFlag并发送新sj信息
+      {
+        sjFlag = true;
+      }
     }
     
     TIM_SetCounter(TIM3, (uint32_t)0);
