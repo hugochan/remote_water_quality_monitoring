@@ -46,6 +46,7 @@ bool newMsgComingFlag = false;//新信息到来标志位
 extern bool onlineFlag;
 extern bool sjFlag;
 extern bool jbFlag;
+extern bool jb_njControlFlag;
 extern bool waitingCmdAck;
 extern bool newMsgAdvertiseFlag;
 extern bool gsmConfigFlag;
@@ -191,12 +192,15 @@ void SysTick_Handler(void)
   */
 void EXTI0_IRQHandler(void)
 {
- 
-     UserButtonPressed = 0x01;
-     STM_EVAL_LEDOn(LED4);//指示警报
-     STM_EVAL_LEDOff(LED3);//指示状态为停机
-     jbFlag = true;
-     /* Clear the EXTI line pending bit */
+     if (!jb_njControlFlag)
+     {
+       STM_EVAL_LEDOn(LED4);//指示警报
+       STM_EVAL_LEDOff(LED3);//指示状态为停机
+       jbFlag = true;//触发警报
+       jb_njControlFlag = true;//进入警报状态
+       
+     }
+    /* Clear the EXTI line pending bit */
      EXTI_ClearITPendingBit(USER_BUTTON_EXTI_LINE);
 
 }

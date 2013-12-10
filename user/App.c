@@ -23,23 +23,24 @@ bool getRT(char *timeStr);
 void IO_Init(void);
 
 #define timerCounterFreq ((uint16_t)2000)
- 
+char machineNum[13]  = "8618328356422";
+
+
 __IO uint32_t TIM2_Val = 36000;//jb应答定时器60s(优先级最高,低于uart)
 __IO uint32_t TIM5_Val = 36000;//注册阶段sj应答定时器||nj应答定时器60s
 __IO uint32_t TIM3_Val = 36000;//sj事务定时器60s（优先级最低）
 
 
 __IO uint16_t TimeDev = 100;//sys中断周期为1000/TimeDev=10ms
-__IO uint8_t UserButtonPressed = 0x00;
-unsigned char *data[3]={"8", "100", "0"};//ph flow state
-char sj[80] = "sj?ph=07&flow=050&state=1#15542893440_201312091200";
+char sj[80] = "sj?ph=08&flow=050&state=1#15542893440_201312091200";
 char zt[80] = "zt?ph=08&flow=050&state=1#15542893440_201312091200";
 char kz[80] = "kz?ack#15542893440_201312091200";
 char jb[80] = "jb?ph=13&state=0#15542893440_201312091200";
 char nj[80] = "nj?ph=08&state=1#15542893440_201312091200";
 
 
-bool firstTime = false;
+bool jb_njControlFlag = false;//用于警报&解除警报控制，true for 有警报， false for 警报解除，只有在警报状态下解除警报才有效
+bool firstTime = false;//首次注册使用
 bool machineState = true;//机器状态标志位（flase for 关机，true for 工作）
 bool gsmConfigFlag = false;//gsm配置成功标志位
 bool onlineFlag = false;//在线标志位（即向上位机注册成功）
@@ -81,8 +82,8 @@ void main()
   STM_EVAL_PBInit(BUTTON_USER, BUTTON_MODE_EXTI); 
   STM_EVAL_LEDInit(LED4);//警报指示灯（黄）
   STM_EVAL_LEDInit(LED3);//状态指示灯
-  STM_EVAL_LEDInit(LED5);
-  STM_EVAL_LEDInit(LED6);
+  STM_EVAL_LEDInit(LED5);//ph触发指示灯
+  STM_EVAL_LEDInit(LED6);//flow触发指示灯
   STM_EVAL_LEDOff(LED4);
   STM_EVAL_LEDOn(LED3);
   STM_EVAL_LEDOff(LED5);
@@ -105,7 +106,11 @@ void main()
   
   //gsmConfigFlag = true;
   //onlineFlag = true;
- 
+ memcpy(strstr(sj, "#")+1, machineNum+2, 11);//更改机器号
+ memcpy(strstr(zt, "#")+1, machineNum+2, 11);
+ memcpy(strstr(jb, "#")+1, machineNum+2, 11);
+ memcpy(strstr(nj, "#")+1, machineNum+2, 11);
+ memcpy(strstr(kz, "#")+1, machineNum+2, 11);
  
   while(1)
   {
@@ -183,7 +188,7 @@ void main()
              else if (strcmp((char*)readMsg[2], "nj?ack#")==0)//nj应答处理
              {
                 njFlag = false;
-                waitingnjAckFlag = false;//jb应答成功，不再监测jb应答
+                waitingnjAckFlag = false;//nj应答成功，不再监测nj应答
                 njAckTimeoutFlag = false;
              }
              
@@ -230,13 +235,14 @@ void main()
          
          else
          {  
-           /*解除警报触发*/
-           if(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_11) == Bit_SET)
+           /*解除警报触发,警报状态下有效*/
+           if((GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_11) == Bit_SET)&&(jb_njControlFlag))
            {
               while(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_11) == Bit_SET);
               STM_EVAL_LEDOff(LED4);//解除警报指示
               STM_EVAL_LEDOn(LED3);//指示状态为工作
-              njFlag = true;  
+              njFlag = true;
+              jb_njControlFlag = false;
            }
            /*ph增触发*/
            if(GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_12) == Bit_SET)
@@ -855,7 +861,7 @@ bool WriteMsg(char* dst, char* content)
     SendChar(0x1A);
     Delay(100);
     waitingCmdAck = false;//等待AT指令应答标志位复位
-    if (recvCmdAck[24] != '>')
+    if (recvCmdAck[recvCmdAckCount-3] == 'R')
     {
       return false;
     }

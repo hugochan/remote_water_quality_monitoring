@@ -29,10 +29,10 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
-
+    
 /* defines ------------------------------------------------------------------*/
-#define machineNum ((unsigned char*)"8615542893440")
-#define upperComputerNum ((char*)"8618328356422")
+
+#define upperComputerNum ((char*)"8618200259213")
 #define Factor ((uint8_t)2)
 /* Includes ------------------------------------------------------------------*/    
     
