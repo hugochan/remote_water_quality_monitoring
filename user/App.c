@@ -18,7 +18,8 @@ bool ReadMsg(unsigned char* readMsg[], char* msgIndex);
 bool ReadMsg2(unsigned char *(*readMsg2[])[], uint8_t *readCount2);
 bool DeleteMsg(char* deleteNum);
 bool DeleteAllMsgs(void);
-bool setRT(void);
+bool synTime(void);
+bool setRT(char *settime);
 bool getRT(char *timeStr);
 void IO_Init(void);
 
@@ -111,7 +112,7 @@ void main()
  memcpy(strstr(jb, "#")+1, machineNum+2, 11);
  memcpy(strstr(nj, "#")+1, machineNum+2, 11);
  memcpy(strstr(kz, "#")+1, machineNum+2, 11);
- 
+ firstTime = false;
   while(1)
   {
     if (gsmConfigFlag)
@@ -169,6 +170,8 @@ void main()
                   zt[15] = (flow/10)+48;
                   zt[16] = (flow%10)+48;
                 }
+               getRT(timeStr);
+               memcpy(strstr(zt, "_")+1, timeStr, 14);
             
                Success = WriteMsg(upperComputerNum, zt);
                while (!Success) 
@@ -205,7 +208,8 @@ void main()
                  machineState = true;
                  STM_EVAL_LEDOn(LED3);//指示状态为工作
                }
-               
+               getRT(timeStr);
+               memcpy(strstr(kz, "_")+1, timeStr, 14);
                generalCounter = 0; 
                Success = WriteMsg(upperComputerNum, kz);
                while (!Success) 
@@ -424,8 +428,6 @@ void main()
            
            if (sjFlag&&(!newMsgAdvertiseFlag))//定期发送sj信息，注册成功后不验证应答信息
            {
-             generalCounter = 0;
-             atAdjust();//调整指令步伐
              if (machineState) sj[24] = '1';
              else sj[24] = '0';
              
@@ -451,7 +453,10 @@ void main()
                 sj[15] = (flow/10)+48;
                 sj[16] = (flow%10)+48;
               }
-             
+
+
+             generalCounter = 0;
+             atAdjust();//调整指令步伐
              getRT(timeStr);
              memcpy(strstr(sj, "_")+1, timeStr, 14);
              Success = WriteMsg(upperComputerNum, sj);
@@ -495,7 +500,8 @@ void main()
                   /*注册成功*/
                  onlineFlag = true;              
                  sjAckTimeoutFlag = false;
-                 generalCounter = 0; 
+                 
+
                  if (machineState) zt[24] = '1';
                  else zt[24] = '0';
                  if(ph<10)
@@ -520,7 +526,10 @@ void main()
                     zt[15] = (flow/10)+48;
                     zt[16] = (flow%10)+48;
                   }
-              
+                 
+                 getRT(timeStr);
+                 memcpy(strstr(sj, "_")+1, timeStr, 14);  
+                 generalCounter = 0; 
                  Success = WriteMsg(upperComputerNum, zt);
                  while (!Success) 
                  {
@@ -788,7 +797,7 @@ bool gsmConfig(void)//config text function of gsm
       return false;
     }
     else
-    {//先删除所有短信
+    {
       waitingCmdAck = true;//等待AT指令应答标志位置位
       recvCmdAckCount = 0;
       SendString("AT+CNMI=1,1,2\r\n");//打开新信息提示模式
@@ -800,11 +809,12 @@ bool gsmConfig(void)//config text function of gsm
       }
       else
       {
-        if(!setRT()) return false;
+        if(!synTime()) return false;
         else return true;
       }
     
     }
+
 }
 /******************************************************************************
 //握手测试
@@ -859,9 +869,9 @@ bool WriteMsg(char* dst, char* content)
     Delay(10);
     SendString((unsigned char*)content);
     SendChar(0x1A);
-    Delay(100);
+    Delay(500);
     waitingCmdAck = false;//等待AT指令应答标志位复位
-    if (recvCmdAck[recvCmdAckCount-3] == 'R')
+    if (recvCmdAck[recvCmdAckCount-3] != 'K')
     {
       return false;
     }
@@ -1075,19 +1085,59 @@ bool DeleteAllMsgs(void)
     return true;
   }
 }
+/******************************************************************************
+//同步当前时间
+//输入参数：
+//输出参数：bool
+*******************************************************************************/
+bool synTime(void)
+{
+    WriteMsg("8610086","");
+    while(!newMsgAdvertiseFlag);
+    newMsgAdvertiseFlag = false;//清除标志位
+    unsigned  char *syntime[3];
+    char timeStr[18];
+    ReadMsg(syntime, newMsgIndex);
 
+
+    timeStr[0] = *syntime[1];
+    timeStr[1] = *(syntime[1]+1);
+    timeStr[2] = '/';
+    timeStr[3] = *(syntime[1]+3);
+    timeStr[4] = *(syntime[1]+4);
+    timeStr[5] = '/';
+    timeStr[6] = *(syntime[1]+6);
+    timeStr[7] = *(syntime[1]+7);
+    timeStr[8] = ',';
+    timeStr[9] = *(syntime[1]+9);
+    timeStr[10] = *(syntime[1]+10);
+    timeStr[11] = ':';
+    timeStr[12] = *(syntime[1]+12);
+    timeStr[13] = *(syntime[1]+13);
+    timeStr[14] = ':';
+    timeStr[15] = *(syntime[1]+15);
+    timeStr[16] = *(syntime[1]+16);
+    timeStr[17] = (char)0x00;
+    if (setRT(timeStr))//设置时间
+    {
+      return true;
+    }
+    else return false;
+    
+}
 /******************************************************************************
 //设置当前时间
 //输入参数：
 //输出参数：bool
 *******************************************************************************/
-bool setRT(void)//???
+bool setRT(char *settime)//???
 {
+  
   waitingCmdAck = true;
   recvCmdAckCount = 0;
   SendString((unsigned char*)"AT+CCLK=");
   SendChar(0x22);
-  SendString((unsigned char*)"13/12/09,16:40:00");
+  SendString((unsigned char*)settime);
   SendChar(0x22);
   SendString((unsigned char*)"\r\n");
   Delay(20);
@@ -1107,7 +1157,7 @@ bool getRT(char *timeStr)
   recvCmdAckCount = 0;
   SendString((unsigned char*)"AT+CCLK?");
   SendString((unsigned char*)"\r\n");
-  Delay(20);
+  Delay(50);
   waitingCmdAck = false;//等待AT指令应答标志位复位
   if(recvCmdAck[14]!='L') return false;
   else
@@ -1162,6 +1212,9 @@ void registration(void)
       sj[15] = (flow/10)+48;
       sj[16] = (flow%10)+48;
     }
+    
+    
+    
     generalCounter = 0;
     if (newMsgAdvertiseFlag) Success = true;
     else Success = WriteMsg(upperComputerNum, sj);
