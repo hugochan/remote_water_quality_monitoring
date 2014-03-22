@@ -24,7 +24,7 @@ bool getRT(char *timeStr);
 void IO_Init(void);
 
 #define timerCounterFreq ((uint16_t)2000)
-char machineNum[13]  = "8618328356422";
+char machineNum[13]  = "8618200259160";//8618200259213
 
 
 __IO uint32_t TIM2_Val = 36000;//jb应答定时器60s(优先级最高,低于uart)
@@ -65,6 +65,7 @@ uint16_t recvNewMsgAdvertiseCount = 0;
 char newMsgIndex[3];
 unsigned char *readMsg[3];
 char generalCounter = 0;
+char gsmErrorCounter = 0;
 char timeStr[14];
 char flow = 50;
 char ph = 7;
@@ -170,7 +171,7 @@ void main()
                   zt[15] = (flow/10)+48;
                   zt[16] = (flow%10)+48;
                 }
-               getRT(timeStr);
+               while(!getRT(timeStr));
                memcpy(strstr(zt, "_")+1, timeStr, 14);
             
                Success = WriteMsg(upperComputerNum, zt);
@@ -208,11 +209,11 @@ void main()
                  machineState = true;
                  STM_EVAL_LEDOn(LED3);//指示状态为工作
                }
-               getRT(timeStr);
+               while(!getRT(timeStr));
                memcpy(strstr(kz, "_")+1, timeStr, 14);
                generalCounter = 0; 
                Success = WriteMsg(upperComputerNum, kz);
-               while (!Success) 
+               while (!Success)
                {
                  Success = WriteMsg(upperComputerNum, kz);
                  generalCounter++;
@@ -291,7 +292,7 @@ void main()
               njNum = 1;
               machineState = true;
               atAdjust();
-              getRT(timeStr);
+              while(!getRT(timeStr));
               memcpy(strstr(nj, "_")+1, timeStr, 14);
              if(ph<10)
              {
@@ -324,7 +325,7 @@ void main()
               if (njNum<4)
               {  
                atAdjust();
-               getRT(timeStr);
+               while(!getRT(timeStr));
                memcpy(strstr(nj, "_")+1, timeStr, 14);
                if(ph<10)
                {
@@ -361,7 +362,7 @@ void main()
              jbNum = 1;
              machineState = false;
              atAdjust();
-             getRT(timeStr);
+             while(!getRT(timeStr));
              memcpy(strstr(jb, "_")+1, timeStr, 14);
              if(ph<10)
              {
@@ -395,7 +396,7 @@ void main()
               if (jbNum < 4)
               {
                atAdjust();
-               getRT(timeStr);
+               while(!getRT(timeStr));
                memcpy(strstr(jb, "_")+1, timeStr, 14);
                
                if(ph<10)
@@ -457,7 +458,7 @@ void main()
 
              generalCounter = 0;
              atAdjust();//调整指令步伐
-             getRT(timeStr);
+             while(!getRT(timeStr));
              memcpy(strstr(sj, "_")+1, timeStr, 14);
              Success = WriteMsg(upperComputerNum, sj);
              while (!Success) 
@@ -465,8 +466,17 @@ void main()
                 atAdjust();
                 Success = WriteMsg(upperComputerNum, sj);
                 generalCounter++;
-                if(generalCounter>2) break;//一共尝试三次
-              }
+                if(generalCounter>2) 
+                {
+                  gsmErrorCounter += generalCounter;
+                  break;//一共尝试三次
+                }
+             }
+             if(gsmErrorCounter >= 12)//检测到gsm不正常
+             {
+                gsmConfigFlag = false;//重新配置GSM
+                gsmErrorCounter = 0;
+             }
              sjFlag = false;
            }
 
@@ -527,7 +537,7 @@ void main()
                     zt[16] = (flow%10)+48;
                   }
                  
-                 getRT(timeStr);
+                 while(!getRT(timeStr));
                  memcpy(strstr(sj, "_")+1, timeStr, 14);  
                  generalCounter = 0; 
                  Success = WriteMsg(upperComputerNum, zt);
@@ -790,25 +800,55 @@ bool gsmConfig(void)//config text function of gsm
     waitingCmdAck = true;//等待AT指令应答标志位置位
     recvCmdAckCount = 0;
     SendString("AT+CMGF=1\r\n");
-    Delay(10);
-    waitingCmdAck = false;//等待AT指令应答标志位复位
-    if(recvCmdAck[12]!='O'||recvCmdAck[13]!='K')
+    //Delay(10);
+    int flag = 0;
+    while(1)
     {
+      Delay(5);
+      if(*(recvCmdAck+recvCmdAckCount-1)=='\n'&&*(recvCmdAck+recvCmdAckCount-2)=='\r')
+      {
+        if(recvCmdAck[recvCmdAckCount-4]=='O'&&recvCmdAck[recvCmdAckCount-3]=='K')
+          flag = 1;
+        else if(recvCmdAck[recvCmdAckCount-4]=='O'&&recvCmdAck[recvCmdAckCount-3]=='R')
+          flag = 2;
+        if(flag) break;
+      }
+    }
+    waitingCmdAck = false;//等待AT指令应答标志位复位
+    if(flag == 2)
+    {
+      memset(recvCmdAck, 0, 1000*sizeof(char));
       return false;
     }
     else
     {
       waitingCmdAck = true;//等待AT指令应答标志位置位
+      memset(recvCmdAck, 0, 1000*sizeof(char));
       recvCmdAckCount = 0;
       SendString("AT+CNMI=1,1,2\r\n");//打开新信息提示模式
-      Delay(10);
-      waitingCmdAck = false;//等待AT指令应答标志位复位
-      if(recvCmdAck[recvCmdAckCount-4]!='O'&&recvCmdAck[recvCmdAckCount-3]!='K')
+      //Delay(10);
+      int flag = 0;
+      while(1)
       {
+        Delay(5);
+        if(*(recvCmdAck+recvCmdAckCount-1)=='\n'&&*(recvCmdAck+recvCmdAckCount-2)=='\r')
+        {
+          if(recvCmdAck[recvCmdAckCount-4]=='O'&&recvCmdAck[recvCmdAckCount-3]=='K')
+            flag = 1;
+          else if(recvCmdAck[recvCmdAckCount-4]=='O'&&recvCmdAck[recvCmdAckCount-3]=='R')
+            flag = 2;
+          if(flag) break;
+        }
+      }
+      waitingCmdAck = false;//等待AT指令应答标志位复位
+      if(flag == 2)
+      {
+        memset(recvCmdAck, 0, 1000*sizeof(char));
         return false;
       }
       else
       {
+        memset(recvCmdAck, 0, 1000*sizeof(char));
         if(!synTime()) return false;
         else return true;
       }
@@ -830,8 +870,10 @@ bool handShake(void)
     waitingCmdAck = false;//等待AT指令应答标志位复位
     if(recvCmdAck[5]=='O'&&recvCmdAck[6]=='K')
     {
+      memset(recvCmdAck, 0, 1000*sizeof(char));
       return true;
     }
+    memset(recvCmdAck, 0, 1000*sizeof(char));
     return false;
 
 }
@@ -848,6 +890,7 @@ void atAdjust(void)
     SendString("\r\n");
     Delay(10);
     waitingCmdAck = false;//等待AT指令应答标志位复位
+    memset(recvCmdAck, 0, 1000*sizeof(char));
 }
 
 
@@ -869,12 +912,30 @@ bool WriteMsg(char* dst, char* content)
     Delay(10);
     SendString((unsigned char*)content);
     SendChar(0x1A);
-    Delay(500);
-    waitingCmdAck = false;//等待AT指令应答标志位复位
-    if (recvCmdAck[recvCmdAckCount-3] != 'K')
+    int flag = 0;
+    while(1)
     {
+      Delay(5);
+      if(*(recvCmdAck+recvCmdAckCount-1)=='\n'&&*(recvCmdAck+recvCmdAckCount-2)=='\r')
+      {
+        if(recvCmdAck[recvCmdAckCount-4]=='O'&&recvCmdAck[recvCmdAckCount-3]=='K')
+          flag = 1;
+        else if(recvCmdAck[recvCmdAckCount-4]=='O'&&recvCmdAck[recvCmdAckCount-3]=='R')
+          flag = 2;
+        if(flag) break;
+      }
+    }
+    waitingCmdAck = false;//等待AT指令应答标志位复位
+    
+    
+    
+    
+    if (flag==2)
+    {
+      memset(recvCmdAck, 0, 1000*sizeof(char));
       return false;
     }
+    memset(recvCmdAck, 0, 1000*sizeof(char));
     return true;
 }
 
@@ -892,11 +953,26 @@ bool ReadMsg(unsigned char* readMsg[], char* msgIndex)
   SendString((unsigned char*)"AT+CMGR=");
   SendString((unsigned char*)msgIndex);
   SendString((unsigned char*)"\r\n");
-  Delay(200);
+  int flag = 0;
+  while(1)
+  {
+    Delay(5);
+    if(*(recvCmdAck+recvCmdAckCount-1)=='\n'&&*(recvCmdAck+recvCmdAckCount-2)=='\r')
+    {
+      if(recvCmdAck[recvCmdAckCount-4]=='O'&&recvCmdAck[recvCmdAckCount-3]=='K')
+        flag = 1;
+      else if(recvCmdAck[recvCmdAckCount-4]=='O'&&recvCmdAck[recvCmdAckCount-3]=='R')
+        flag = 2;
+      if(flag) break;
+    }
+  }
+  
+  //Delay(200);
   waitingCmdAck = false;//等待AT指令应答标志位复位
-  if (recvCmdAck[recvCmdAckCount-4]!='O'||recvCmdAck[recvCmdAckCount-3]!='K')
+  if (flag==2)
   {
     readFlag = false;
+    memset(recvCmdAck, 0, 1000*sizeof(char));
   }
   else
   {
@@ -932,10 +1008,8 @@ bool ReadMsg(unsigned char* readMsg[], char* msgIndex)
         ptr++;
         ptrCount++;
       }
-      *(readMsg[2]+ptrCount+1) = (unsigned char)0x00;
-    
+      *(readMsg[2]+ptrCount+1) = (unsigned char)0x00;    
       readFlag = true;
-    
   }
   return readFlag;
 }
@@ -965,6 +1039,7 @@ bool ReadMsg2(unsigned char *(*readMsg2[])[], uint8_t *readCount2)
   if (recvCmdAck[16]!='+'||recvCmdAck[17]!='C')
   {
     recvFlag = false;
+    memset(recvCmdAck, 0, 1000*sizeof(char));
   }
   else
   {
@@ -1033,6 +1108,7 @@ bool ReadMsg2(unsigned char *(*readMsg2[])[], uint8_t *readCount2)
       *readCount2 += 1;
     }
     recvFlag = true;
+    memset(recvCmdAck, 0, 1000*sizeof(char));
   }
   return recvFlag;
 }
@@ -1050,14 +1126,29 @@ bool DeleteMsg(char* deleteNum)
   SendString((unsigned char*)"AT+CMGD=");
   SendString((unsigned char*)deleteNum);
   SendString((unsigned char*)"\r\n");
-  Delay(20);
-  waitingCmdAck = false;//等待AT指令应答标志位复位
-  if(recvCmdAck[12] == 'E')
+  //Delay(20);
+  int flag = 0;
+  while(1)
   {
+    Delay(5);
+    if(*(recvCmdAck+recvCmdAckCount-1)=='\n'&&*(recvCmdAck+recvCmdAckCount-2)=='\r')
+    {
+      if(recvCmdAck[recvCmdAckCount-4]=='O'&&recvCmdAck[recvCmdAckCount-3]=='K')
+        flag = 1;
+      else if(recvCmdAck[recvCmdAckCount-4]=='O'&&recvCmdAck[recvCmdAckCount-3]=='R')
+        flag = 2;
+      if(flag) break;
+    }
+  }
+  waitingCmdAck = false;//等待AT指令应答标志位复位
+  if(flag == 2)
+  {
+    memset(recvCmdAck, 0, 1000*sizeof(char));
     return false;
   }
   else
   {
+    memset(recvCmdAck, 0, 1000*sizeof(char));
     return true;
   }
 }
@@ -1074,14 +1165,29 @@ bool DeleteAllMsgs(void)
   recvCmdAckCount = 0;
   SendString((unsigned char*)"AT+CMGD=1,4");
   SendString((unsigned char*)"\r\n");
-  Delay(20);
-  waitingCmdAck = false;//等待AT指令应答标志位复位
-  if(recvCmdAck[13] == 'E')
+  //Delay(20);
+  int flag = 0;
+  while(1)
   {
+    Delay(5);
+    if(*(recvCmdAck+recvCmdAckCount-1)=='\n'&&*(recvCmdAck+recvCmdAckCount-2)=='\r')
+    {
+      if(recvCmdAck[recvCmdAckCount-4]=='O'&&recvCmdAck[recvCmdAckCount-3]=='K')
+        flag = 1;
+      else if(recvCmdAck[recvCmdAckCount-4]=='O'&&recvCmdAck[recvCmdAckCount-3]=='R')
+        flag = 2;
+      if(flag) break;
+    }
+  }
+  waitingCmdAck = false;//等待AT指令应答标志位复位
+  if(flag == 2)
+  {
+    memset(recvCmdAck, 0, 1000*sizeof(char));
     return false;
   }
   else
   {
+    memset(recvCmdAck, 0, 1000*sizeof(char));
     return true;
   }
 }
@@ -1092,13 +1198,14 @@ bool DeleteAllMsgs(void)
 *******************************************************************************/
 bool synTime(void)
 {
-    WriteMsg("8610086","");
+    while(!WriteMsg("8610086",""));
+    
     while(!newMsgAdvertiseFlag);
     newMsgAdvertiseFlag = false;//清除标志位
-    unsigned  char *syntime[3];
+    unsigned  char *syntime[3] = {"\0","\0","\0"};
     char timeStr[18];
     ReadMsg(syntime, newMsgIndex);
-
+    
 
     timeStr[0] = *syntime[1];
     timeStr[1] = *(syntime[1]+1);
@@ -1140,10 +1247,31 @@ bool setRT(char *settime)//???
   SendString((unsigned char*)settime);
   SendChar(0x22);
   SendString((unsigned char*)"\r\n");
-  Delay(20);
+  //Delay(20);
+  int flag = 0;
+  while(1)
+  {
+    Delay(5);
+    if(*(recvCmdAck+recvCmdAckCount-1)=='\n'&&*(recvCmdAck+recvCmdAckCount-2)=='\r')
+    {
+      if(recvCmdAck[recvCmdAckCount-4]=='O'&&recvCmdAck[recvCmdAckCount-3]=='K')
+        flag = 1;
+      else if(recvCmdAck[recvCmdAckCount-4]=='O'&&recvCmdAck[recvCmdAckCount-3]=='R')
+        flag = 2;
+      if(flag) break;
+    }
+  }
   waitingCmdAck = false;//等待AT指令应答标志位复位
-  if((recvCmdAck[recvCmdAckCount-4]!='O')&&(recvCmdAck[recvCmdAckCount-3]!='K')) return false;
-  else return true;
+  if(flag == 2) 
+  {
+    memset(recvCmdAck, 0, 1000*sizeof(char));
+    return false;
+  }
+  else
+  {
+    memset(recvCmdAck, 0, 1000*sizeof(char));
+    return true;
+  }
 }
 
 /******************************************************************************
@@ -1157,9 +1285,25 @@ bool getRT(char *timeStr)
   recvCmdAckCount = 0;
   SendString((unsigned char*)"AT+CCLK?");
   SendString((unsigned char*)"\r\n");
-  Delay(50);
+  int flag = 0;
+  while(1)
+  {
+    Delay(5);
+    if(*(recvCmdAck+recvCmdAckCount-1)=='\n'&&*(recvCmdAck+recvCmdAckCount-2)=='\r')
+    {
+      if(recvCmdAck[recvCmdAckCount-4]=='O'&&recvCmdAck[recvCmdAckCount-3]=='K')
+        flag = 1;
+      else if(recvCmdAck[recvCmdAckCount-4]=='O'&&recvCmdAck[recvCmdAckCount-3]=='R')
+        flag = 2;
+      if(flag) break;
+    }
+  }
   waitingCmdAck = false;//等待AT指令应答标志位复位
-  if(recvCmdAck[14]!='L') return false;
+  if(flag == 2)
+  {
+    memset(recvCmdAck, 0, 1000*sizeof(char));
+    return false;
+  }
   else
   {
     char *ptr = strstr((char*)recvCmdAck, "+CCLK:");
@@ -1178,6 +1322,7 @@ bool getRT(char *timeStr)
     timeStr[11] = *(ptr+13);
     timeStr[12] = *(ptr+15);
     timeStr[13] = *(ptr+16);
+    memset(recvCmdAck, 0, 1000*sizeof(char));
     return true;
   }
 }
@@ -1191,7 +1336,7 @@ bool getRT(char *timeStr)
 void registration(void)
 {   
     atAdjust();
-    getRT(timeStr);
+    while(!getRT(timeStr));
     memcpy(strstr(sj, "_")+1, timeStr, 14);
     if (machineState) sj[24] = '1';
     else sj[24] = '0';

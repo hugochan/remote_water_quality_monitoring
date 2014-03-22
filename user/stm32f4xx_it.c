@@ -226,7 +226,7 @@ void USART1_IRQHandler(void)
           //处理新信息
           
           char tempdata = USART_ReceiveData(USART1);
-          if ((recvNewMsgAdvertiseCount == 0)&&(tempdata == 'I'))//从+CNMI:的'I'开始接受AT指令，作为判据
+          if ((recvNewMsgAdvertiseCount == 0)&&(tempdata == 'I'))//从+CMTI:的'I'开始接受AT指令，作为判据
           {
             newMsgComingFlag = true;
           }
@@ -234,7 +234,7 @@ void USART1_IRQHandler(void)
           {
             recvNewMsgAdvertise[recvNewMsgAdvertiseCount] = tempdata;
             recvNewMsgAdvertiseCount++;
-            if(recvNewMsgAdvertise[recvNewMsgAdvertiseCount-1] == '\r')
+            if(tempdata == '\r')
             {
               uint8_t i; 
               for(i=8;i<(recvNewMsgAdvertiseCount-1);i++)
